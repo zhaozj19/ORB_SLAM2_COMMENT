@@ -43,26 +43,38 @@ using namespace std;
 namespace ORB_SLAM2
 {
 
-Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Map *pMap, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor):
+Tracking::Tracking( System *pSys,               //SLAM系统指针
+                    ORBVocabulary* pVoc,        //词典类指针
+                    FrameDrawer *pFrameDrawer,  //关键帧绘制类指针
+                    MapDrawer *pMapDrawer,      //地图绘制类指针
+                    Map *pMap,                  //地图类指针
+                    KeyFrameDatabase* pKFDB,    //关键帧数据类指针
+                    const string &strSettingPath,   //配置文件路径
+                    const int sensor):              //传感器类型
     mState(NO_IMAGES_YET), mSensor(sensor), mbOnlyTracking(false), mbVO(false), mpORBVocabulary(pVoc),
     mpKeyFrameDB(pKFDB), mpInitializer(static_cast<Initializer*>(NULL)), mpSystem(pSys), mpViewer(NULL),
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpMap(pMap), mnLastRelocFrameId(0)
 {
     // Load camera parameters from settings file
 
+    //通过通过OpenCV提供的FileStorage函数来读取YAML配置文件，这里应该再判断一下文件是否打开成功
+    //读取相机内参
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
     float fx = fSettings["Camera.fx"];
     float fy = fSettings["Camera.fy"];
     float cx = fSettings["Camera.cx"];
     float cy = fSettings["Camera.cy"];
 
+    //构造相机内参矩阵，
+    //Mat::eye返回一个恒等指定大小和类型的对角矩阵（矩阵对角元素为1）。
     cv::Mat K = cv::Mat::eye(3,3,CV_32F);
     K.at<float>(0,0) = fx;
     K.at<float>(1,1) = fy;
     K.at<float>(0,2) = cx;
     K.at<float>(1,2) = cy;
-    K.copyTo(mK);
+    K.copyTo(mK);           //使用copyTo函数可以得到一个复制的矩阵，copyTo的速度比clone的速度要更快。
 
+    //创建4行1列畸变系数矩阵
     cv::Mat DistCoef(4,1,CV_32F);
     DistCoef.at<float>(0) = fSettings["Camera.k1"];
     DistCoef.at<float>(1) = fSettings["Camera.k2"];
@@ -76,6 +88,9 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     }
     DistCoef.copyTo(mDistCoef);
 
+    //bf是水平方向的焦距（单位为像素）乘以基线（单位为米）
+    //在双目中通过视差求点的深度值的公式为z=(fx*b)/d, d为两像素的视差，b为基线，fx为水平方向的焦距
+    //这个参数单目用不到
     mbf = fSettings["Camera.bf"];
 
     float fps = fSettings["Camera.fps"];
@@ -103,6 +118,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     int nRGB = fSettings["Camera.RGB"];
     mbRGB = nRGB;
 
+    //表示图片的颜色格式，RGB还是BGR
     if(mbRGB)
         cout << "- color order: RGB (ignored if grayscale)" << endl;
     else
@@ -110,17 +126,19 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
 
     // Load ORB parameters
 
-    int nFeatures = fSettings["ORBextractor.nFeatures"];
-    float fScaleFactor = fSettings["ORBextractor.scaleFactor"];
-    int nLevels = fSettings["ORBextractor.nLevels"];
-    int fIniThFAST = fSettings["ORBextractor.iniThFAST"];
-    int fMinThFAST = fSettings["ORBextractor.minThFAST"];
+    int nFeatures = fSettings["ORBextractor.nFeatures"];        //特征数量，代表每一张图片要提取的特征数量
+    float fScaleFactor = fSettings["ORBextractor.scaleFactor"]; //图片缩放金字塔的缩放因子（如果第一张图片尺寸为s，那么第二张就为s/scale）
+    int nLevels = fSettings["ORBextractor.nLevels"];            //图片金字塔层数
+    int fIniThFAST = fSettings["ORBextractor.iniThFAST"];       //图片被划分成网格，每一个网格提取的特征数默认为该值
+    int fMinThFAST = fSettings["ORBextractor.minThFAST"];       //如果该网格的特征点实在过少，那么提取的特征点就为该值
 
     mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
 
+    //如果是双目的情况下，会再构造一个右图的特征提取器
     if(sensor==System::STEREO)
         mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
 
+    // 在单目初始化的时候，会用 mpIniORBextractor 来作为特征点提取器。（单目的特征点为双目的2倍）
     if(sensor==System::MONOCULAR)
         mpIniORBextractor = new ORBextractor(2*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
 
@@ -133,10 +151,15 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
 
     if(sensor==System::STEREO || sensor==System::RGBD)
     {
+        //mThDepth的意思是baseline的多少倍（为什么要用这种方式表示？）
         mThDepth = mbf*(float)fSettings["ThDepth"]/fx;
         cout << endl << "Depth Threshold (Close/Far Points): " << mThDepth << endl;
     }
 
+    //RGBD的情况下，需要考虑深度图缩放因子
+    //配置文件里面mDepthMapFactor为5000
+    //比如说有一个原始的深度图矩阵，里面的元素都为5000、6000、7000之类的
+    //那么转换成实际的深度图时需要乘以缩放因子，也就是把5000*（factor）
     if(sensor==System::RGBD)
     {
         mDepthMapFactor = fSettings["DepthMapFactor"];

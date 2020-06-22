@@ -29,9 +29,15 @@
 namespace ORB_SLAM2
 {
 
-System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
-               const bool bUseViewer):mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false),mbActivateLocalizationMode(false),
-        mbDeactivateLocalizationMode(false)
+System::System( const string &strVocFile,       //准备好的ORB词典路径
+                const string &strSettingsFile,  //配置文件路径（格式为YAML）
+                const eSensor sensor,           //传感器类型，分别为单目0，双面1，RGB-D2
+                const bool bUseViewer):         //是否可视化
+                                        mSensor(sensor),   
+                                        mpViewer(static_cast<Viewer*>(NULL)),   //此处先把一个NULL强制转成Viewer*类型，用来初始化mpViewer
+                                        mbReset(false),                         //复位标志（待更新）
+                                        mbActivateLocalizationMode(false),      //模式转换标志（待更新）
+                                        mbDeactivateLocalizationMode(false)     //模式转换标志（待更新）
 {
     // Output welcome message
     cout << endl <<
@@ -51,6 +57,10 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //Check settings file
     //通过OpenCV提供的FileStorage函数可以像C++流那样，来读写YAML或者XML文件
+    //cv::FileStorage(const String& source, int flags, const string& encodeing=String())
+    //source 要打开的数据文件，最好用绝对路径
+    //flags 枚举变量值（READ、WRITE、APPEND）
+    //encoding 文件的编码方式
     cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
     if(!fsSettings.isOpened())
     {
