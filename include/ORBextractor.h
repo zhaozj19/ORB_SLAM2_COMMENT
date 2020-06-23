@@ -56,6 +56,21 @@ public:
     // Compute the ORB features and descriptors on an image.
     // ORB are dispersed on the image using an octree.
     // Mask is ignored in the current implementation.
+    //C++重载括号（调用）操作符
+    //这里举一个C++Primer中的一个例子
+    // struct absInt{
+    //     int operator() (int val){
+    //         return val < 0 ? -val : val;
+    //     }
+    // }
+    //这个类定义了一个操作：函数调用操作符，该操作符有一个形参并返回形参的绝对值。
+    // int i = -42;
+    // absInt absObj;
+    // unsigned int ui = absObj(i);
+    //尽管absObj是一个对象而不是函数，我们仍然可以“调用”该对象，效果是运行由absObj对象定义的重载调用操作符
+    //该操作符接受一个int值并返回它的绝对值。
+    //函数调用操作符必须声明为成员函数。一个类可以定义函数调用操作符的多个版本，由形参的数目或类型加以区别。
+    //定义了调用操作符的类，其对象常称为函数对象（function object），即它们是行为类似函数的对象。
     void operator()( cv::InputArray image, cv::InputArray mask,
       std::vector<cv::KeyPoint>& keypoints,
       cv::OutputArray descriptors);
@@ -92,6 +107,8 @@ protected:
                                            const int &maxX, const int &minY, const int &maxY, const int &nFeatures, const int &level);
 
     void ComputeKeyPointsOld(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
+
+    //pattern变量将用于描述子的计算
     std::vector<cv::Point> pattern;
 
     int nfeatures;
@@ -100,8 +117,10 @@ protected:
     int iniThFAST;
     int minThFAST;
 
+    //记录图片金字塔每一层应该提取的特征数量，顺序是从低到高
     std::vector<int> mnFeaturesPerLevel;
 
+    //用于 ORB特征 的方向向量
     std::vector<int> umax;
 
     std::vector<float> mvScaleFactor;

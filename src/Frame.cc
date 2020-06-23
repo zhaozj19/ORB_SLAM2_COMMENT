@@ -171,7 +171,15 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
 }
 
 
-Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth)
+//单目模式的帧构造函数
+Frame::Frame(   const cv::Mat &imGray,      //灰度图
+                const double &timeStamp,    //时间戳
+                ORBextractor* extractor,    //ORB特征提取器
+                ORBVocabulary* voc,         //词典
+                cv::Mat &K,                 //相机内参
+                cv::Mat &distCoef,          //畸变系数矩阵
+                const float &bf,            //x focal * baseline
+                const float &thDepth)       //baseline的若干倍
     :mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
 {
@@ -188,6 +196,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
+    //提取ORB特征，0代表提取左图的特征点
     ExtractORB(0,imGray);
 
     N = mvKeys.size();
