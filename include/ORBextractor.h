@@ -97,6 +97,8 @@ public:
         return mvInvLevelSigma2;
     }
 
+
+    //存储的是图像金字塔每一层的灰度图
     std::vector<cv::Mat> mvImagePyramid;
 
 protected:
@@ -123,10 +125,10 @@ protected:
     //用于 ORB特征 的方向向量
     std::vector<int> umax;
 
-    std::vector<float> mvScaleFactor;
-    std::vector<float> mvInvScaleFactor;    
-    std::vector<float> mvLevelSigma2;
-    std::vector<float> mvInvLevelSigma2;
+    std::vector<float> mvScaleFactor;           //存储的是原始的缩放率，比如缩放率是1.2，那么存储的就是1.2
+    std::vector<float> mvInvScaleFactor;        //存储的是缩放率的倒数，比如1 / 1.2
+    std::vector<float> mvLevelSigma2;           //存储的是缩放因子的平方
+    std::vector<float> mvInvLevelSigma2;        //存储缩放因子平方的倒数（这里为什么要定义缩放因子的平方？）
 };
 
 } //namespace ORB_SLAM

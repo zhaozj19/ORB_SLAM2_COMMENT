@@ -129,8 +129,8 @@ Tracking::Tracking( System *pSys,               //SLAM系统指针
     int nFeatures = fSettings["ORBextractor.nFeatures"];        //特征数量，代表每一张图片要提取的特征数量
     float fScaleFactor = fSettings["ORBextractor.scaleFactor"]; //图片缩放金字塔的缩放因子（如果第一张图片尺寸为s，那么第二张就为s/scale）
     int nLevels = fSettings["ORBextractor.nLevels"];            //图片金字塔层数
-    int fIniThFAST = fSettings["ORBextractor.iniThFAST"];       //图片被划分成网格，每一个网格提取的特征数默认为该值
-    int fMinThFAST = fSettings["ORBextractor.minThFAST"];       //如果该网格的特征点实在过少，那么提取的特征点就为该值
+    int fIniThFAST = fSettings["ORBextractor.iniThFAST"];       //图片被划分成网格，提取FAST关键点的时候的默认阈值
+    int fMinThFAST = fSettings["ORBextractor.minThFAST"];       //如果该网格按照默认阈值实在是找不出来太多特征点，则用较小的阈值
 
     mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
 

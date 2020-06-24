@@ -407,22 +407,26 @@ static int bit_pattern_31_[256*4] =
     -1,-6, 0,-11/*mean (0.127148), correlation (0.547401)*/
 };
 
-ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
-         int _iniThFAST, int _minThFAST):
+ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特征数量
+                            float _scaleFactor,     //图片金字塔缩放因子
+                            int _nlevels,           //图片金字塔层数
+                            int _iniThFAST,         //图片被划分成网格，提取FAST关键点的时候的默认阈值
+                            int _minThFAST):        //如果该网格按照默认阈值实在是找不出来太多特征点，则用较小的阈值
     nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
     iniThFAST(_iniThFAST), minThFAST(_minThFAST)
 {
     mvScaleFactor.resize(nlevels);
     mvLevelSigma2.resize(nlevels);
-    mvScaleFactor[0]=1.0f;
-    mvLevelSigma2[0]=1.0f;
+    mvScaleFactor[0]=1.0f;              //代表金字塔最下层的那张是原始的灰度图，不进行缩放。
+    mvLevelSigma2[0]=1.0f;              //代表缩放因子的平方
     for(int i=1; i<nlevels; i++)
     {
         mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;
         mvLevelSigma2[i]=mvScaleFactor[i]*mvScaleFactor[i];
     }
 
-    mvInvScaleFactor.resize(nlevels);
+    //mvInvScaleFactor存储的是
+    mvInvScaleFactor.resize(nlevels);       // 调整容器的大小，使其包含n个元素。
     mvInvLevelSigma2.resize(nlevels);
     for(int i=0; i<nlevels; i++)
     {
@@ -762,32 +766,46 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     return vResultKeys;
 }
 
+
+//使用八叉树的方式提取图片金字塔中每层图片的特征点
 void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoints)
 {
+    //resize成金字塔的大小
     allKeypoints.resize(nlevels);
 
+    //之前提到过，ORB-SLAM2会将图片分成多干个grid，每个grid的大小就是30*30
     const float W = 30;
 
     for (int level = 0; level < nlevels; ++level)
     {
+        //这4个变量表示这层图片的坐标边界，这里的3是因为在计算FAST特征点的时候，需要建立一个半径为3的圆
         const int minBorderX = EDGE_THRESHOLD-3;
         const int minBorderY = minBorderX;
         const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
         const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
 
+        //vToDistributeKeys存储这一层需要分配的特征点；
+        //为什么需要分配呐？（待更新）
+        //因为一般采集的特征点都很多，这里预先乘以10，后续还会处理
+        //这里注意一下resize和reserve的区别：resize为vector分配指定大小内存并且初始化，reserve也为vector分配内存，但不及逆行初始化。
         vector<cv::KeyPoint> vToDistributeKeys;
         vToDistributeKeys.reserve(nfeatures*10);
 
+        //待提取图片区域的宽和高
         const float width = (maxBorderX-minBorderX);
         const float height = (maxBorderY-minBorderY);
 
+        //标记当前网格所在图片的下表（比如一个图片分成10*10个网格，那么有一个网格的坐标为（1，2），这两个值就是标记这个的）
         const int nCols = width/W;
         const int nRows = height/W;
+        //标记网格内的像素宽高
         const int wCell = ceil(width/nCols);
         const int hCell = ceil(height/nRows);
 
         for(int i=0; i<nRows; i++)
         {
+            //计算当前行的初始Y坐标以及最大Y坐标
+            //为了更好的提取FAST关键点，这里把maxY多设置了6个像素（3+3）
             const float iniY =minBorderY+i*hCell;
             float maxY = iniY+hCell+6;
 
@@ -805,18 +823,30 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
                 if(maxX>maxBorderX)
                     maxX = maxBorderX;
 
+                //每个cell里面的FAST关键点
                 vector<cv::KeyPoint> vKeysCell;
+
+                //调用OpenCV的库函数来提取FAST关键点
+                //void FAST(InputArray image, vector<KeyPoint>& keypoints, int threshold, bool nonmaxSuppression=true)
+                //image – 输入灰度图像。
+                //keypoints – 检测到的特征点。
+                //threshold – 中心像素的像素值和该像素周围的像素值之差的阈值。
+                //nonmaxSuppression – 是否对特征点采用极大值抑制。
                 FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
                      vKeysCell,iniThFAST,true);
 
                 if(vKeysCell.empty())
                 {
+                    //如果按照默认的阈值，找不到特征点，则改用较小的阈值
+                    //如果还找不到呐？那就接着用更小的阈值吧。
                     FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
                          vKeysCell,minThFAST,true);
                 }
 
                 if(!vKeysCell.empty())
                 {
+                    ////遍历其中的所有FAST角点（注意这里用的是vector<cv::KeyPoint>提供的迭代器）
+                    //现在我们需要把cell里面特征点的坐标转换成在图片中的坐标，这是为了下面构造八叉树做准备
                     for(vector<cv::KeyPoint>::iterator vit=vKeysCell.begin(); vit!=vKeysCell.end();vit++)
                     {
                         (*vit).pt.x+=j*wCell;
@@ -828,7 +858,10 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
             }
         }
 
+        //声明一个对当前图层的特征点的容器的引用
+        //这里通过用allKeypoints初始化引用容器的方法，把allKeypoints和金字塔特征点联系起来
         vector<KeyPoint> & keypoints = allKeypoints[level];
+        //预申请大小，默认值为1000
         keypoints.reserve(nfeatures);
 
         keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
@@ -1040,19 +1073,26 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
 }
 
-void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
-                      OutputArray _descriptors)
+//完成对灰度图的ORB特征提取
+void ORBextractor::operator()(  InputArray _image,              //灰度图；InputArray和OutputArray都是OpenCV里的代理类，前者默认加了const限定符，后者则可变
+                                InputArray _mask,               //掩膜（常用于提取灰度图兴趣区等操作，这里这个变量没有用到）
+                                vector<KeyPoint>& _keypoints,   //保存灰度图的关键点
+                      OutputArray _descriptors)                 //保存灰度图的描述子，为矩阵类型
 { 
     if(_image.empty())
         return;
 
-    Mat image = _image.getMat();
-    assert(image.type() == CV_8UC1 );
+    Mat image = _image.getMat();        //从输入的矩阵数组中提取矩阵；getMat(int idx = -1)默认参数为-1
+    assert(image.type() == CV_8UC1 );   //CV_8UC1 是指一个8位无符号整型单通道矩阵，S = 符号整型 U = 无符号整型 F = 浮点型
 
     // Pre-compute the scale pyramid
+    //首先构造图像金字塔，详情参见ComputePyramid函数
     ComputePyramid(image);
 
+
+    //allKeypoints存储图片金字塔的ORB特征点
     vector < vector<KeyPoint> > allKeypoints;
+    //使用八叉树的方式提取每层图片的特征点
     ComputeKeyPointsOctTree(allKeypoints);
     //ComputeKeyPointsOld(allKeypoints);
 
@@ -1104,19 +1144,34 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
     }
 }
 
+//构造图像金字塔
 void ORBextractor::ComputePyramid(cv::Mat image)
 {
     for (int level = 0; level < nlevels; ++level)
     {
+        //首先获取金字塔每一层的缩放率（从低到高，最底层是1）
         float scale = mvInvScaleFactor[level];
+        //cvRound 返回跟参数最接近的整数值；cvFloor 返回不大于参数的最大整数值；cvCeil 返回不小于参数的最小整数值。
+        //计算本层缩放后图片的尺寸大小
         Size sz(cvRound((float)image.cols*scale), cvRound((float)image.rows*scale));
+        //在缩放后的尺寸基础上，又另外加了EDGE_THRESHOLD*2的尺寸，这么加的作用可能是为了让缩放后的边缘像素，也可以有效的提取ORB特征。
         Size wholeSize(sz.width + EDGE_THRESHOLD*2, sz.height + EDGE_THRESHOLD*2);
+        //生成temp和masktemp矩阵，第一个变量用来生成缩放之后的灰度图，第二个没用到。
         Mat temp(wholeSize, image.type()), masktemp;
         mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
 
         // Compute the resized image
         if( level != 0 )
         {
+            //resize函数来改变图像的大小
+            //void resize(InputArray src, OutputArray dst, Size dsize, double fx=0, double fy=0, int interpolation=INTER_LINEAR );
+            //src：输入，原图像，即待改变大小的图像；
+            //dst：输出，改变大小之后的图像，这个图像和原图像具有相同的内容，只是大小和原图像不一样而已；
+            //dsize：输出图像的大小。
+            //fx：width方向的缩放比例
+            //fy：height方向的缩放比例
+            //interpolation：这个是指定插值的方式，图像缩放之后，肯定像素要进行重新计算的，就靠这个参数来指定重新计算像素的方式
+            //此处为INTER_LINEAR - 双线性插值，如果最后一个参数你不指定，默认使用这种方法
             resize(mvImagePyramid[level-1], mvImagePyramid[level], sz, 0, 0, INTER_LINEAR);
 
             copyMakeBorder(mvImagePyramid[level], temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
@@ -1124,6 +1179,15 @@ void ORBextractor::ComputePyramid(cv::Mat image)
         }
         else
         {
+            //copyMakeBorder()函数可以复制图像并制作边界，将特定图像轻微变大，然后以各种方式自动填充图
+            //void copyMakeBorder(InputArray  src,   输入图像
+		                    //  OutputArray dst,     输出图像
+							//  int top,             表示示对边界每个方向添加的像素个数，边界的方向包括上下左右
+							//  int bottom,          
+							//  int left,            
+							//  int right, 
+							//  int borderType,       表示边界的类型，BORDER_REFLECT_101（gfedcb|abcdefgh|gfedcba 以边界为对称轴反射复制像素）
+
             copyMakeBorder(image, temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
                            BORDER_REFLECT_101);            
         }
