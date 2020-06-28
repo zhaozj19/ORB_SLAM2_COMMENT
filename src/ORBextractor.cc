@@ -69,11 +69,13 @@ using namespace std;
 namespace ORB_SLAM2
 {
 
-const int PATCH_SIZE = 31;
+const int PATCH_SIZE = 31;          //使用灰度质心法时，所需要用到的特征点的图像块的直径（特征点的图像块是个圆）
 const int HALF_PATCH_SIZE = 15;
 const int EDGE_THRESHOLD = 19;
 
 
+
+//计算特征点的方向
 static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 {
     int m_01 = 0, m_10 = 0;
@@ -407,7 +409,7 @@ static int bit_pattern_31_[256*4] =
     -1,-6, 0,-11/*mean (0.127148), correlation (0.547401)*/
 };
 
-ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特征数量
+ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特征数量（整个金字塔所有的特征数）
                             float _scaleFactor,     //图片金字塔缩放因子
                             int _nlevels,           //图片金字塔层数
                             int _iniThFAST,         //图片被划分成网格，提取FAST关键点的时候的默认阈值
@@ -473,26 +475,33 @@ ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特�
     }
 }
 
+//计算特征点的方向
 static void computeOrientation(const Mat& image, vector<KeyPoint>& keypoints, const vector<int>& umax)
 {
     for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
          keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
     {
+        //就看这行代码，就这一句有用
+        //转到IC_Angle函数，看具体实现
         keypoint->angle = IC_Angle(image, keypoint->pt, umax);
     }
 }
 
+
+//在四叉树中，父节点分裂为4个子节点的函数
 void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4)
 {
+    //得到当前节点的一半X，一半Y
     const int halfX = ceil(static_cast<float>(UR.x-UL.x)/2);
     const int halfY = ceil(static_cast<float>(BR.y-UL.y)/2);
 
     //Define boundaries of childs
+    //定义子节点的边界
     n1.UL = UL;
     n1.UR = cv::Point2i(UL.x+halfX,UL.y);
     n1.BL = cv::Point2i(UL.x,UL.y+halfY);
     n1.BR = cv::Point2i(UL.x+halfX,UL.y+halfY);
-    n1.vKeys.reserve(vKeys.size());
+    n1.vKeys.reserve(vKeys.size());     //默认子节点的特征数和父节点一样多（这里只是预分配内存，并不存在初始化的操作）
 
     n2.UL = n1.UR;
     n2.UR = UR;
@@ -513,6 +522,7 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
     n4.vKeys.reserve(vKeys.size());
 
     //Associate points to childs
+    //通过计算特征点位于哪个子节点中，把父节点的特征点划分给子节点
     for(size_t i=0;i<vKeys.size();i++)
     {
         const cv::KeyPoint &kp = vKeys[i];
@@ -529,6 +539,7 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
             n4.vKeys.push_back(kp);
     }
 
+    //默认子节点都可以再分裂
     if(n1.vKeys.size()==1)
         n1.bNoMore = true;
     if(n2.vKeys.size()==1)
@@ -540,19 +551,29 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
 
 }
 
-vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>& vToDistributeKeys, const int &minX,
-                                       const int &maxX, const int &minY, const int &maxY, const int &N, const int &level)
+vector<cv::KeyPoint> ORBextractor::DistributeOctTree(   const vector<cv::KeyPoint>& vToDistributeKeys,  //金字塔这一层图片中的特征点
+                                                        const int &minX,        //提取特征区域的最小X
+                                                        const int &maxX,        //提取特征区域的最大X
+                                                        const int &minY,        //提取特征区域的最小Y
+                                                        const int &maxY,        //提取特征区域的最大Y
+                                                        const int &N,           //这一层应该提取多少个特征点
+                                                        const int &level)       //金字塔的本层数
 {
     // Compute how many initial nodes   
+    //计算初始节点个数
+    //因为如果图片较宽，用w/h的方式，比如说一张640x480的图片，此时就一个节点
     const int nIni = round(static_cast<float>(maxX-minX)/(maxY-minY));
 
+    //计算节点x的范围
     const float hX = static_cast<float>(maxX-minX)/nIni;
 
+    //代表四叉树中所有有效的节点（因为在下面分裂的过程中，如果某一个节点的特征数为0就会在链表中抹去）
     list<ExtractorNode> lNodes;
-
+    //存储节点四叉树中节点的指针（定义这个变量是为了把vToDistributeKeys中的特征点都分配到初始节点中）
     vector<ExtractorNode*> vpIniNodes;
     vpIniNodes.resize(nIni);
 
+    //生成nIni个节点，结果全部保存在lNodes中，这个lNodes就是四叉树本身了，特别重要！！！
     for(int i=0; i<nIni; i++)
     {
         ExtractorNode ni;
@@ -563,18 +584,24 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
         ni.vKeys.reserve(vToDistributeKeys.size());
 
         lNodes.push_back(ni);
+        //通过back函数提取出新加入的节点，把其指针赋值给vpIniNodes
         vpIniNodes[i] = &lNodes.back();
     }
 
     //Associate points to childs
+    //把vToDistributeKeys中的特征点都分配到初始节点中（通过特征点的x坐标除以hX就可以的到节点的index，就可以push了）
     for(size_t i=0;i<vToDistributeKeys.size();i++)
     {
         const cv::KeyPoint &kp = vToDistributeKeys[i];
         vpIniNodes[kp.pt.x/hX]->vKeys.push_back(kp);
     }
 
+    //接下来就开始分裂了，一切围绕着lit迭代器。
     list<ExtractorNode>::iterator lit = lNodes.begin();
 
+
+    //这里还是先对初始节点进行处理，把特征点数为1的节点，设置为不可分裂状态
+    //再把没有特征点的节点直接抹去
     while(lit!=lNodes.end())
     {
         if(lit->vKeys.size()==1)
@@ -588,8 +615,10 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
             lit++;
     }
 
-    bool bFinish = false;
 
+    //迭代是否结束的标志
+    bool bFinish = false;
+    //迭代次数
     int iteration = 0;
 
     vector<pair<int,ExtractorNode*> > vSizeAndPointerToNode;
@@ -603,6 +632,8 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
         lit = lNodes.begin();
 
+
+        //在分裂过程中，计算某一轮分裂中，在分裂出来的子节点中，还可以继续分裂（子节点特征数大于1）的子节点数量
         int nToExpand = 0;
 
         vSizeAndPointerToNode.clear();
@@ -612,23 +643,28 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
             if(lit->bNoMore)
             {
                 // If node only contains one point do not subdivide and continue
+                //判断当前节点是否处于不可分裂状态
                 lit++;
                 continue;
             }
             else
             {
                 // If more than one point, subdivide
-                ExtractorNode n1,n2,n3,n4;
-                lit->DivideNode(n1,n2,n3,n4);
+                //父节点分裂为4个子节点的操作
+                ExtractorNode n1,n2,n3,n4;      //首先定义4个子节点
+                lit->DivideNode(n1,n2,n3,n4);   //lit代表当亲节点的指针，调用DivideNode函数进行分裂
 
                 // Add childs if they contain points
                 if(n1.vKeys.size()>0)
                 {
-                    lNodes.push_front(n1);                    
+                    lNodes.push_front(n1);      //把新节点插入list头部
                     if(n1.vKeys.size()>1)
                     {
-                        nToExpand++;
+                        nToExpand++;        //可分裂的节点数+1
+                        
+                        //把n1节点的特征点数和指针保存下来
                         vSizeAndPointerToNode.push_back(make_pair(n1.vKeys.size(),&lNodes.front()));
+                        //把n1节点的lit赋值（其实就是本身）
                         lNodes.front().lit = lNodes.begin();
                     }
                 }
@@ -663,17 +699,23 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                     }
                 }
 
-                lit=lNodes.erase(lit);
+                lit=lNodes.erase(lit);      //把已经分裂的父节点抹去，并返回下一个节点
                 continue;
             }
         }       
 
         // Finish if there are more nodes than required features
         // or all nodes contain just one point
+        //停止节点分裂的过程需要满足下面两个条件之一：
+        //1.当前四叉树中的节点数已经超过了金字塔这一层中所需要的特征点数（N）
+        //2.当前四叉树中的所有节点中，都只有一个特征点（这里作者用一个变量prevSize来判断lNodes.size是否发生了变化，很聪明）
         if((int)lNodes.size()>=N || (int)lNodes.size()==prevSize)
         {
             bFinish = true;
         }
+        //如果当前的lNodes中的节点数，再加上其中可以分裂的节点数的三倍大于N，就让那些可以继续分裂的节点，接着分裂
+        //这里的3，是因为节点虽然分裂出了4个，但是自己本身却被抹去了，而lNodes.size()已经包含了可以分裂的节点，所以只需要加3
+        //疑问：为什么要单独搞一个 else if来分裂节点呐，直接在返回到上面的while里继续分裂不就好了吗？
         else if(((int)lNodes.size()+nToExpand*3)>N)
         {
 
@@ -685,6 +727,9 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                 vector<pair<int,ExtractorNode*> > vPrevSizeAndPointerToNode = vSizeAndPointerToNode;
                 vSizeAndPointerToNode.clear();
 
+                //这里按照节点内的特征点数，从小到大进行排列
+                //然后for循环倒着来，优先分裂那些节点中密集的特征点的节点
+                //可以起到让特征点多的区域先分裂，防止特征点扎堆，也可以早日满足特征点达到N的要求，早早退出循环
                 sort(vPrevSizeAndPointerToNode.begin(),vPrevSizeAndPointerToNode.end());
                 for(int j=vPrevSizeAndPointerToNode.size()-1;j>=0;j--)
                 {
@@ -729,12 +774,15 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                         }
                     }
 
+
+                    //分裂完毕之后，就删除本节点。上面的lNodes.front().lit = lNodes.begin();原来是为了利用lit删除自己用的
                     lNodes.erase(vPrevSizeAndPointerToNode[j].second->lit);
 
                     if((int)lNodes.size()>=N)
                         break;
                 }
 
+                //解释同上
                 if((int)lNodes.size()>=N || (int)lNodes.size()==prevSize)
                     bFinish = true;
 
@@ -743,14 +791,27 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     }
 
     // Retain the best point in each node
+    //这时候已经退出了上面的分裂过程，
     vector<cv::KeyPoint> vResultKeys;
     vResultKeys.reserve(nfeatures);
     for(list<ExtractorNode>::iterator lit=lNodes.begin(); lit!=lNodes.end(); lit++)
     {
         vector<cv::KeyPoint> &vNodeKeys = lit->vKeys;
         cv::KeyPoint* pKP = &vNodeKeys[0];
+        //KeyPoint这数据结构中有如下数据成员
+        //CV_WRAP KeyPoint() : pt(0,0), size(0), angle(-1), response(0), octave(0), class_id(-1) {}
+        //pt(x,y):关键点的点坐标；
+        //size():该关键点邻域直径大小；
+        //angle:角度，表示关键点的方向，值为[零,三百六十)，负值表示不使用。
+        //response:响应强度，代表该点强壮大小，即该点是特征点的程度。
+        //octave:从哪一层金字塔得到的此关键点。
+        //class_id:当要对图片进行分类时，用class_id对每个关键点进行区分，默认为-1。
+        //我们要找出一个节点中，最健壮的特征点，就是根据response属性来找的
         float maxResponse = pKP->response;
 
+
+        //这个for循环，貌似很简单，都能看得懂
+        //用size_t来定义k，很好的习惯
         for(size_t k=1;k<vNodeKeys.size();k++)
         {
             if(vNodeKeys[k].response>maxResponse)
@@ -762,7 +823,10 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
         vResultKeys.push_back(*pKP);
     }
-
+    
+    //看到这里，就知道了为什么作者在while循环里面做了那么多小技巧
+    //全都是为了让提取出来的特征点分散，包括对可分裂节点按照特征点数量从小到大排序
+    //然后返回vResultKeys，就得到了金字塔这一层所需要的特征点数（注意啊，这里得到的特征点有可能是大于N的）
     return vResultKeys;
 }
 
@@ -864,25 +928,40 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         //预申请大小，默认值为1000
         keypoints.reserve(nfeatures);
 
+        //由于在cell中提取的关键点在很大程度上是扎堆出现的，因此需要极大值抑制
+        //这个操作是通过将将当前所提取出来的特征点分配到平面四叉树（就是四叉树啊，怎么那么多文献说八叉树）中实现的
         keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
                                       minBorderY, maxBorderY,mnFeaturesPerLevel[level], level);
 
+        //scaledPatchSize用来记录关键点邻域直径大小，用来计算特征点的方向信息的
+        //PATCH_SIZE是按照金字塔底层图像（也就是原图）所涉及的灰度质心法中的圆圈直径，所以金字塔的上层也要按照缩放比例对这个PATCH_SIZE进行缩放
         const int scaledPatchSize = PATCH_SIZE*mvScaleFactor[level];
 
         // Add border to coordinates and scale information
+        //nkps代表这一层图像所提取出来的特征点数
         const int nkps = keypoints.size();
         for(int i=0; i<nkps ; i++)
         {
+            //对每一个保留下来的特征点，恢复到相对于当前图层“边缘扩充图像下”的坐标系的坐标
             keypoints[i].pt.x+=minBorderX;
             keypoints[i].pt.y+=minBorderY;
+            //记录特征点来源的图像金字塔图层
             keypoints[i].octave=level;
+            //记录计算方向的patch，缩放后对应的大小， 又被称作为特征点半径
             keypoints[i].size = scaledPatchSize;
         }
     }
 
     // compute orientations
     for (int level = 0; level < nlevels; ++level)
+    {
+        //计算特征点的方向信息
+        //mvImagePyramid[level]保存的是金字塔中每一层的灰度图
+        //allKeypoints[level]保存的是金字塔中每一层的特征点
+        //umax代表PATCH的横坐标边界
         computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
+    }
+        
 }
 
 void ORBextractor::ComputeKeyPointsOld(std::vector<std::vector<KeyPoint> > &allKeypoints)

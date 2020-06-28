@@ -29,17 +29,20 @@
 namespace ORB_SLAM2
 {
 
+
+//提取器节点
 class ExtractorNode
 {
 public:
     ExtractorNode():bNoMore(false){}
 
+    //节点分裂为4个子节点的函数
     void DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4);
 
-    std::vector<cv::KeyPoint> vKeys;
-    cv::Point2i UL, UR, BL, BR;
-    std::list<ExtractorNode>::iterator lit;
-    bool bNoMore;
+    std::vector<cv::KeyPoint> vKeys;            //本节点中的特征点
+    cv::Point2i UL, UR, BL, BR;                 //本节点的坐标范围（左上、右上、左下、右下）
+    std::list<ExtractorNode>::iterator lit;     //list（双向链表）的迭代器
+    bool bNoMore;       //不能够再分裂的标志（代码中判断这个这个节点的特征数是否为1，如果为1，则bNoMore为真。如果没有特征点的话，这个节点就会被删除）
 };
 
 class ORBextractor
