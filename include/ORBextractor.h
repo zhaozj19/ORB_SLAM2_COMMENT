@@ -126,6 +126,7 @@ protected:
     std::vector<int> mnFeaturesPerLevel;
 
     //用于 ORB特征 的方向向量
+    //用来计算灰度质心法中的圆形区域每一行应有的像素数
     std::vector<int> umax;
 
     std::vector<float> mvScaleFactor;           //存储的是原始的缩放率，比如缩放率是1.2，那么存储的就是1.2

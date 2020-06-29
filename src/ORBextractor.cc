@@ -70,38 +70,72 @@ namespace ORB_SLAM2
 {
 
 const int PATCH_SIZE = 31;          //使用灰度质心法时，所需要用到的特征点的图像块的直径（特征点的图像块是个圆）
-const int HALF_PATCH_SIZE = 15;
-const int EDGE_THRESHOLD = 19;
+const int HALF_PATCH_SIZE = 15;     //灰度质心法中的圆的半径
+const int EDGE_THRESHOLD = 19;      //图像边
+//生成这个边的目的是进行图像金子塔的生成时，需要对图像进行高斯滤波处理，为了考虑到使滤波后的图像边界处的像素也能够携带有正确的图像信息，
+//这里作者就将原图像扩大了一个边。
 
 
 
 //计算特征点的方向
+//因为FAST角点并不具备旋转不变性，所以这里给特征点计算一个方向，让它有旋转不变性
+//方法是计算以特征点为中心的圆形区域的质心，然后找到圆形区域中心（也就是特征点的位置）与质心之间的连线方向
 static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 {
+    //首先定义两个图像的矩,特征点与质点夹角公式为（θ=arctan(m_01, m_10)）
     int m_01 = 0, m_10 = 0;
 
+    //Mat类中的at方法对于获取图像矩阵某点的RGB值或者改变某点的值
+    //对于单通道来说：image.at<uchar>(i, j)
+    //对于多通道来说：image.at<Vec3b>(i, j)[0]、image.at<Vec3b>(i, j)[1]、image.at<Vec3b>(i, j)[2]
+    //因为 ij对应的是i行j列，pt.x,pt.y对应的是像素值，所以pt.y就代表行，pt.x就代表列
+    //注意啦，这个center是一个指向这个特征点的指针！！！
     const uchar* center = &image.at<uchar> (cvRound(pt.y), cvRound(pt.x));
 
     // Treat the center line differently, v=0
+    //先特殊处理过特征点的水平线
+    //这个center[u]，其实就是从圆的左侧边缘像素一直循环到圈的右侧边缘像素
     for (int u = -HALF_PATCH_SIZE; u <= HALF_PATCH_SIZE; ++u)
         m_10 += u * center[u];
 
     // Go line by line in the circuI853lar patch
+    //这个step代表这个二维图像中的行有几个字节，用于跨行跳转像素
     int step = (int)image.step1();
     for (int v = 1; v <= HALF_PATCH_SIZE; ++v)
     {
         // Proceed over the two lines
+        //注意这里是以中心线为对称轴，然后对称地每成对的两行之间进行遍历，这样处理加快了计算速度
+        //本来m_01应该是一列一列地计算的，但是由于对称以及坐标x,y正负的原因，对于每列的计算来讲，本质上其实就是中心行
+		//以下的坐标的像素灰度减去中心行以上的坐标的像素灰度。而这里的遍历方式与之类似，不同的是一对行一对行地，计算每列这对行
+		//的像素灰度值之差。这里的v_sum累计的就是这一对行中，所有列的这个像素灰度值之差
         int v_sum = 0;
+        //获取某行像素横坐标的最大范围，注意这里的图像块是圆形的！
         int d = u_max[v];
+        //遍历行中的每一个像素（只是某两行）
+        //这里特征点为原点，建立一个半径为HALF_PATCH_SIZE的圆，从靠近X的两侧，慢慢向圆的上方和下方扩展
+        //特别注意，这个坐标的y是向下的。这就是解释了为什么下面的val_plus反而要加，而val_minus却要减（针对m_01来说）
         for (int u = -d; u <= d; ++u)
         {
+            //对于每一条横线来说，由于是从中心线同时往上下两个方向展开的，所以需要区别处理
+            //val_plus代表下方的，val_minus代表上方的
+            //在中心线下方的是需要进行加运算的像素灰度值（站在m_01的立场上）
+            //在中心线上方的则是需要进行减运算的像素灰度值
+
             int val_plus = center[u + v*step], val_minus = center[u - v*step];
+            //在y轴方向上的和就是这样计算的，这个只是中间结果
             v_sum += (val_plus - val_minus);
-            m_10 += u * (val_plus + val_minus);
+            //x轴方向上的和则是这样计算，然后x坐标加权（这里遍历的时候x坐标也有正负符号），本质上相当于同时计算两行
+            //这个u就相当于图像矩中的x，因为u已经有正负之分了，所以，这里val_plus + val_minus。
+            m_10 += u * (val_plus + val_minus);     
         }
-        m_01 += v * v_sum;
+
+        //将这一行上的和按照y坐标加权;而前面的中间行的y坐标为0所以和不加的效果是一样的
+        //这个v就相当于图像矩中的y，因为v是从1开始的
+        m_01 += v * v_sum;      
     }
 
+    //计算方向
+    //fastAtan2函数得出的角度是以X轴正方向为0°方向，然后角度确定按照逆时针方向，以360°为终点，角度范围0°- 360°
     return fastAtan2((float)m_01, (float)m_10);
 }
 
@@ -457,6 +491,7 @@ ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特�
 
     //This is for orientation
     // pre-compute the end of a row in a circular patch
+    //umax保持最大个行数
     umax.resize(HALF_PATCH_SIZE + 1);
 
     int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
