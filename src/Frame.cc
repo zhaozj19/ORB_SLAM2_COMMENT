@@ -57,8 +57,17 @@ Frame::Frame(const Frame &frame)
         SetPose(frame.mTcw);
 }
 
-
-Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth)
+//双目模式的帧构造函数
+Frame::Frame(const cv::Mat &imLeft, 
+            const cv::Mat &imRight, 
+            const double &timeStamp, 
+            ORBextractor* extractorLeft, 
+            ORBextractor* extractorRight, 
+            ORBVocabulary* voc, 
+            cv::Mat &K, 
+            cv::Mat &distCoef, 
+            const float &bf, 
+            const float &thDepth)
     :mpORBvocabulary(voc),mpORBextractorLeft(extractorLeft),mpORBextractorRight(extractorRight), mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mpReferenceKF(static_cast<KeyFrame*>(NULL))
 {
@@ -116,7 +125,16 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     AssignFeaturesToGrid();
 }
 
-Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth)
+//RGBD模式的帧构造函数
+Frame::Frame(const cv::Mat &imGray, 
+            const cv::Mat &imDepth, 
+            const double &timeStamp, 
+            ORBextractor* extractor,
+            ORBVocabulary* voc, 
+            cv::Mat &K, 
+            cv::Mat &distCoef, 
+            const float &bf, 
+            const float &thDepth)
     :mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
 {

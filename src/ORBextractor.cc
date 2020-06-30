@@ -141,28 +141,39 @@ static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 
 
 const float factorPI = (float)(CV_PI/180.f);
-static void computeOrbDescriptor(const KeyPoint& kpt,
-                                 const Mat& img, const Point* pattern,
-                                 uchar* desc)
+
+//计算特征点的描述子
+static void computeOrbDescriptor(const KeyPoint& kpt,       //特征点
+                                 const Mat& img,            //灰度图
+                                 const Point* pattern,      //随机采样点集
+                                 uchar* desc)               //用作输出变量，保存计算好的描述子，长度为32*8bit
 {
+    //得到关键点方向的弧度制表示
     float angle = (float)kpt.angle*factorPI;
+    //得到这个弧度的余弦值和正弦值
     float a = (float)cos(angle), b = (float)sin(angle);
 
+    //用center来指向这个特征点
     const uchar* center = &img.at<uchar>(cvRound(kpt.pt.y), cvRound(kpt.pt.x));
+    //获得图像的每行的字节数
     const int step = (int)img.step;
 
+    //原始的BRIEF描述子不具有方向信息，这里就是通过加入了特征点的方向来计算描述子，称之为Steer BRIEF描述子使其具有较好的旋转不变特性。
     #define GET_VALUE(idx) \
         center[cvRound(pattern[idx].x*b + pattern[idx].y*a)*step + \
                cvRound(pattern[idx].x*a - pattern[idx].y*b)]
 
 
+    //brief描述子由32*8位组成，
+    //其中每一位是来自两个像素点灰度的直接比较，所以每比较出8bit结果，需要16个随机点，这也就是为什么pattern需要+=16的原因
     for (int i = 0; i < 32; ++i, pattern += 16)
     {
+        //t0参与比较的一个特征点的灰度值，t1参与比较的另一个特征点的灰度值，val是8对特征点比较结果 按位或运算 得出来的结果
         int t0, t1, val;
         t0 = GET_VALUE(0); t1 = GET_VALUE(1);
         val = t0 < t1;
         t0 = GET_VALUE(2); t1 = GET_VALUE(3);
-        val |= (t0 < t1) << 1;
+        val |= (t0 < t1) << 1;                  //<<左移操作符，　例如： 3 << 2，则是将数字3左移2位
         t0 = GET_VALUE(4); t1 = GET_VALUE(5);
         val |= (t0 < t1) << 2;
         t0 = GET_VALUE(6); t1 = GET_VALUE(7);
@@ -177,12 +188,12 @@ static void computeOrbDescriptor(const KeyPoint& kpt,
         val |= (t0 < t1) << 7;
 
         desc[i] = (uchar)val;
-    }
+    }//通过对随机点像素灰度的比较，得出BRIEF描述子，一共是32*8=256位，也就是一个特征点描述子的大小为32Bytes
 
     #undef GET_VALUE
 }
 
-
+//256是指可以提取出256bit的描述子信息，一共是512个点
 static int bit_pattern_31_[256*4] =
 {
     8,-3, 9,5/*mean (0), correlation (0)*/,
@@ -485,8 +496,11 @@ ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特�
     }
     mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
 
+    //表示512个点，因为bit_pattern_31_数组定义的是256*4（也就是256*2*2，表示512个点，每个点由两个值）
     const int npoints = 512;
+    //注意到pattern0数据类型为Points*,bit_pattern_31_是int[]型，所以这里需要进行强制类型转换
     const Point* pattern0 = (const Point*)bit_pattern_31_;
+    //pattern指向512个离散点
     std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
 
     //This is for orientation
@@ -494,6 +508,9 @@ ORBextractor::ORBextractor( int _nfeatures,         //每张图片提取的特�
     //umax保持最大个行数
     umax.resize(HALF_PATCH_SIZE + 1);
 
+    //这下面的操作都是处理灰度质心法中的圆圈内每一行的像素数，结果保存在umax中
+    //作者的思路看起来太难受，我不写那么详细了
+    //cvFloor返回不大于参数的最大整数值（向下取整），cvCeil返回不小于参数的最小整数值（向上取整），cvRound则是四舍五入
     int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
     int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);
     const double hp2 = HALF_PATCH_SIZE*HALF_PATCH_SIZE;
@@ -993,7 +1010,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         //计算特征点的方向信息
         //mvImagePyramid[level]保存的是金字塔中每一层的灰度图
         //allKeypoints[level]保存的是金字塔中每一层的特征点
-        //umax代表PATCH的横坐标边界
+        //umax代表灰度质心法中，圆圈内每一行的像素数
         computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
     }
         
@@ -1178,13 +1195,26 @@ void ORBextractor::ComputeKeyPointsOld(std::vector<std::vector<KeyPoint> > &allK
         computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
 }
 
-static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Mat& descriptors,
-                               const vector<Point>& pattern)
+
+//计算金字塔图层描述子
+static void computeDescriptors( const Mat& image,                   //灰度图
+                                vector<KeyPoint>& keypoints,        //特征点
+                                Mat& descriptors,                   //灰度图描述子
+                                const vector<Point>& pattern)       //计算描述子使用的随机点集
 {
+    //清零描述子矩阵
     descriptors = Mat::zeros((int)keypoints.size(), 32, CV_8UC1);
 
+    //可见，描述子计算是一个特征点一个特征点来的
     for (size_t i = 0; i < keypoints.size(); i++)
+    {
+        //keypoints[i]：待计算描述子的特征点
+        //image：灰度图
+        //随机点集的首地址
+        //提取出来的描述子的保存位置，此处代表第i行
         computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
+    }
+        
 }
 
 //完成对灰度图的ORB特征提取
@@ -1206,10 +1236,12 @@ void ORBextractor::operator()(  InputArray _image,              //灰度图；In
 
     //allKeypoints存储图片金字塔的ORB特征点
     vector < vector<KeyPoint> > allKeypoints;
-    //使用八叉树的方式提取每层图片的特征点
+    //使用四叉树的方式提取每层图片的特征点
     ComputeKeyPointsOctTree(allKeypoints);
     //ComputeKeyPointsOld(allKeypoints);
 
+    //====================描述子的计算=====================
+    //保存描述子用的矩阵
     Mat descriptors;
 
     int nkeypoints = 0;
@@ -1219,6 +1251,7 @@ void ORBextractor::operator()(  InputArray _image,              //灰度图；In
         _descriptors.release();
     else
     {
+        //创建描述子矩阵（可见每一个特征点占据一行）
         _descriptors.create(nkeypoints, 32, CV_8U);
         descriptors = _descriptors.getMat();
     }
@@ -1236,16 +1269,28 @@ void ORBextractor::operator()(  InputArray _image,              //灰度图；In
             continue;
 
         // preprocess the resized image
+        //获取金字塔某一层的原图
         Mat workingMat = mvImagePyramid[level].clone();
+        //对原图进行高斯模糊处理
+        //void GaussianBlur(InputArray src, OutputArray dst, Size ksize, double sigmaX, double sigmaY=0, int borderType=BORDER_DEFAULT )
+        //src: 输入图像
+        //dst: 输出图像，与输入图像有相同的类型和尺寸
+        //ksize: 高斯内核大小
+        //sigmaX: 高斯核函数在X方向上的标准偏差
+        //sigmaY: 高斯核函数在Y方向上的标准偏差
+        //borderType：边界像素扩展模式
         GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
 
         // Compute the descriptors
+        //desc存储当前图层的描述子
         Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+        //计算描述子
         computeDescriptors(workingMat, keypoints, desc, pattern);
-
+        //更新偏移量
         offset += nkeypointsLevel;
 
         // Scale keypoint coordinates
+        //对特征点坐标进行恢复，底图不需要恢复
         if (level != 0)
         {
             float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
@@ -1254,8 +1299,9 @@ void ORBextractor::operator()(  InputArray _image,              //灰度图；In
                 keypoint->pt *= scale;
         }
         // And add the keypoints to the output
+        //把特征点写入_keypoints形参中
         _keypoints.insert(_keypoints.end(), keypoints.begin(), keypoints.end());
-    }
+    }//到这里就结束了，一张完整图片的特征点也就完了，描述子也求完了，分别是_keypoints和_descriptors
 }
 
 //构造图像金字塔
