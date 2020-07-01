@@ -109,6 +109,7 @@ public:
     double mTimeStamp;
 
     // Calibration matrix and OpenCV distortion parameters.
+    //相机内参矩阵
     cv::Mat mK;
     static float fx;
     static float fy;
@@ -134,7 +135,9 @@ public:
     // Vector of keypoints (original for visualization) and undistorted (actually used by the system).
     // In the stereo case, mvKeysUn is redundant as images must be rectified.
     // In the RGB-D case, RGB images can be distorted.
+    //原始左图像提取出的特征点（未校正），mvKeysRight代表右图（未校正）
     std::vector<cv::KeyPoint> mvKeys, mvKeysRight;
+    //校正mvKeys后的特征点
     std::vector<cv::KeyPoint> mvKeysUn;
 
     // Corresponding stereo coordinate and depth for each keypoint.
@@ -164,6 +167,8 @@ public:
     cv::Mat mTcw;
 
     // Current and Next Frame id.
+    
+    //注意这个地方是类全局静态变量，在图像帧类中被初始化定义为0，每当有一个图像被送进来转换成帧的时候，这个变量都会+1
     static long unsigned int nNextId;
     long unsigned int mnId;
 

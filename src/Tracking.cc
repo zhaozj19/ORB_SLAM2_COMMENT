@@ -285,10 +285,19 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
             cvtColor(mImGray,mImGray,CV_BGRA2GRAY);
     }
 
+
+    //构造Frame
     if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)
+    {
+        //当还没有初始化的时候，用的是mpIniORBextractor来初始化
         mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
+    }
     else
+    {
+        //当程序正常运行的时候使用的是正常的ORB特征点提取器
         mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
+    }
+        
 
     Track();
 

@@ -202,26 +202,40 @@ Frame::Frame(   const cv::Mat &imGray,      //灰度图
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
 {
     // Frame ID
+    //---------------Step1：获取帧ID----------------
     mnId=nNextId++;
 
     // Scale Level Info
+    //---------------Step2：获取图像金字塔相关参数---------------
+    //获取图像金字塔的层数
     mnScaleLevels = mpORBextractorLeft->GetLevels();
+    //获取图像金字塔的缩放因子，就是配置文件里的1.2
     mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
+    //计算每层缩放因子的自然对数
     mfLogScaleFactor = log(mfScaleFactor);
+    //获取图像金字塔每层各自的缩放因子，比如第一层是1，第二层是1.2，第三层是1.2*1.2，。。。
     mvScaleFactors = mpORBextractorLeft->GetScaleFactors();
+    //获取图像金字塔每层各自的缩放因子的倒数
     mvInvScaleFactors = mpORBextractorLeft->GetInverseScaleFactors();
+    //获取图像金字塔每层各自缩放因子的平方
     mvLevelSigma2 = mpORBextractorLeft->GetScaleSigmaSquares();
+    //获取图像金字塔每层各自缩放因子的平方的倒数
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
-    //提取ORB特征，0代表提取左图的特征点
+    //-------------Step3：提取图像的ORB特征-----------------
+    //提取ORB特征，0代表提取左图的特征点，1代表右图（单目用不到）
     ExtractORB(0,imGray);
 
+    //N代表特征点个数
     N = mvKeys.size();
 
+    //如果当前图像没有成功提取出来特征点，就return
     if(mvKeys.empty())
         return;
 
+    //--------------Step4：对特征点进行矫正-----------------
+    //疑问（这里为什么不直接先对图像进行矫正，而是对特征点进行矫正）
     UndistortKeyPoints();
 
     // Set no stereo information
@@ -428,8 +442,11 @@ void Frame::ComputeBoW()
     }
 }
 
+//对特征点去畸变
 void Frame::UndistortKeyPoints()
 {
+    /*-----------Step1：首先判断图像是否已经去畸变-------------*/
+    //如果mDistCoef内存储的畸变参数为0，那么说明配置文件里的配置就是0，也就是说图像已经经过去畸变了，这里直接赋值返回就行
     if(mDistCoef.at<float>(0)==0.0)
     {
         mvKeysUn=mvKeys;
@@ -437,6 +454,8 @@ void Frame::UndistortKeyPoints()
     }
 
     // Fill matrix with points
+    /*-----------Step2：如果图像没有经过去畸变，那么就对特征点进行矫正-------------*/
+    //首先用mat来保存特征点的坐标
     cv::Mat mat(N,2,CV_32F);
     for(int i=0; i<N; i++)
     {
@@ -445,12 +464,29 @@ void Frame::UndistortKeyPoints()
     }
 
     // Undistort points
+    // 调整mat的通道为2，矩阵的行列形状不变
+    //这个函数的原型是：cv::Mat::reshape(int cn,int rows=0) const
+    //其中cn为更改后的通道数，rows=0表示这个行将保持原来的参数不变
+    //不过根据手册发现这里的修改通道只是在逻辑上修改，并没有真正地操作数据
+    //这里调整通道的目的应该是这样的，下面的undistortPoints()函数接收的mat认为是2通道的，两个通道的数据正好组成了一个点的两个坐标
     mat=mat.reshape(2);
-    cv::undistortPoints(mat,mat,mK,mDistCoef,cv::Mat(),mK);
+    cv::undistortPoints(        // 用cv的函数进行失真校正
+        mat,                    //输入的特征点坐标
+        mat,                    //输出的特征点坐标，也就是校正后的特征点坐标
+        mK,                     //相机的内参数矩阵
+        mDistCoef,              //保存相机畸变参数的变量
+        cv::Mat(),              //一个空的cv::Mat()类型，对应为函数原型中的R。Opencv的文档中说如果是单目相机，这里可以是空矩阵
+        mK);                    //相机的内参数矩阵，对应为函数原型中的P
+
+    //然后调整回只有一个通道，回归我们正常的处理方式
     mat=mat.reshape(1);
 
     // Fill undistorted keypoint vector
+
+    //*-----------Step3：把处理过后的特征点坐标赋值给mvKeysUn-------------*/
+    //申请空间，并初始化为0
     mvKeysUn.resize(N);
+    //for循环遍历每一个特征点
     for(int i=0; i<N; i++)
     {
         cv::KeyPoint kp = mvKeys[i];
