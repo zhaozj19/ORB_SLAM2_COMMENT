@@ -235,24 +235,36 @@ Frame::Frame(   const cv::Mat &imGray,      //灰度图
         return;
 
     //--------------Step4：对特征点进行矫正-----------------
-    //疑问（这里为什么不直接先对图像进行矫正，而是对特征点进行矫正）
     UndistortKeyPoints();
 
     // Set no stereo information
+    //由于单目相机只有左图，所以这里，把mvuRight和mvDepth都设为-1
     mvuRight = vector<float>(N,-1);
     mvDepth = vector<float>(N,-1);
 
+    //先把所有特征点对应的地图点都设置为NULL
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
+    //先假设他们都不是离群点
     mvbOutlier = vector<bool>(N,false);
 
     // This is done only for the first Frame (or after a change in the calibration)
+    //只有第一帧的时候会初始化，或者在重定位之后
+    /** 判断是否需要进行进行特殊初始化,这个过程一般是在第一帧或者是重定位之后进行.主要操作有:\n
+     *      - 计算未校正图像的边界 Frame::ComputeImageBounds() 
+     *      - 计算一个像素列相当于几个（<1）图像网格列
+     *      - 给相机的内参数赋值
+     *      - 标志复位
+     */ 
     if(mbInitialComputations)
     {
+        //计算去畸变之后图像的边界
         ComputeImageBounds(imGray);
 
+        //特征点坐标乘以以下两个变量就会确定特征点落在哪个格子
         mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX);
         mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY);
 
+        //焦距和图像坐标系中心点
         fx = K.at<float>(0,0);
         fy = K.at<float>(1,1);
         cx = K.at<float>(0,2);
@@ -260,16 +272,23 @@ Frame::Frame(   const cv::Mat &imGray,      //灰度图
         invfx = 1.0f/fx;
         invfy = 1.0f/fy;
 
+
+        //以后就不在做上述操作了
         mbInitialComputations=false;
     }
 
+    //mb为基线（这里是单目，应该没用吧mb）
     mb = mbf/fx;
 
+    //将提取出来的特征点分配到帧的网格中
     AssignFeaturesToGrid();
 }
 
+
+//将提取出来的特征点分配到帧的网格中，其实每一个网格存储的是特征点们的id
 void Frame::AssignFeaturesToGrid()
 {
+    //先假设每个网格可以存储平均值的一半（至于为什么是一半，可能是经验吧）
     int nReserve = 0.5f*N/(FRAME_GRID_COLS*FRAME_GRID_ROWS);
     for(unsigned int i=0; i<FRAME_GRID_COLS;i++)
         for (unsigned int j=0; j<FRAME_GRID_ROWS;j++)
@@ -280,7 +299,9 @@ void Frame::AssignFeaturesToGrid()
         const cv::KeyPoint &kp = mvKeysUn[i];
 
         int nGridPosX, nGridPosY;
+        //nGridPosX和nGridPosY 以引用的方式传递参数，如果求出来特征点所在格子的横纵坐标之后，就返回true
         if(PosInGrid(kp,nGridPosX,nGridPosY))
+            //把特征点id放入格子中
             mGrid[nGridPosX][nGridPosY].push_back(i);
     }
 }
@@ -293,17 +314,26 @@ void Frame::ExtractORB(int flag, const cv::Mat &im)
         (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight);
 }
 
+//设置当前相机位姿（意思是从世界坐标系到相机坐标系的变换矩阵T）
 void Frame::SetPose(cv::Mat Tcw)
 {
+    //深复制；a.copyTo(b)这种也是深复制
+    //copyTo函数、clone函数拷贝的不仅仅是信息头，还有矩阵本身，而“= ”运算符与拷贝构造函数仅仅拷贝了信息头，他们指向的其实是一个矩阵
     mTcw = Tcw.clone();
+    //更新和相机位姿相关的
     UpdatePoseMatrices();
 }
 
+//更新和相机位姿相关的变量
 void Frame::UpdatePoseMatrices()
 { 
+    //得到旋转矩阵（从世界坐标系到相机坐标系）
     mRcw = mTcw.rowRange(0,3).colRange(0,3);
+    //取逆代表相反的旋转（因为旋转矩阵肯定是正交矩阵，正交矩阵的转置就是逆，所以这里直接转置就可以了）
     mRwc = mRcw.t();
+    //从变换矩阵中取出平移向量（前三行的第四列）
     mtcw = mTcw.rowRange(0,3).col(3);
+    //光心在世界坐标系下的坐标
     mOw = -mRcw.t()*mtcw;
 }
 
@@ -420,6 +450,7 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
     return vIndices;
 }
 
+//计算kp关键点，属于哪个cell，算出来之后以引用的方式得到cell的横坐标和纵坐标，如果失败就返回false
 bool Frame::PosInGrid(const cv::KeyPoint &kp, int &posX, int &posY)
 {
     posX = round((kp.pt.x-mnMinX)*mfGridElementWidthInv);
@@ -433,11 +464,16 @@ bool Frame::PosInGrid(const cv::KeyPoint &kp, int &posX, int &posY)
 }
 
 
+//计算当前帧的字典
 void Frame::ComputeBoW()
 {
+    //只有当当前帧没有被计算字典时，才进行计算
     if(mBowVec.empty())
     {
+        //要写入词袋信息,将以OpenCV格式存储的描述子 Frame::mDescriptors 转换成为vector<cv::Mat>存储
         vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors);
+        //将特征点的描述子转换成为当前帧的词袋
+        //4代表字典树中的从叶子节点向上数的第4层
         mpORBvocabulary->transform(vCurrentDesc,mBowVec,mFeatVec,4);
     }
 }
@@ -487,6 +523,7 @@ void Frame::UndistortKeyPoints()
     //申请空间，并初始化为0
     mvKeysUn.resize(N);
     //for循环遍历每一个特征点
+
     for(int i=0; i<N; i++)
     {
         cv::KeyPoint kp = mvKeys[i];
@@ -496,29 +533,40 @@ void Frame::UndistortKeyPoints()
     }
 }
 
+//计算去畸变后图片的边界
 void Frame::ComputeImageBounds(const cv::Mat &imLeft)
 {
+    //首先判断是否已经做过去畸变
     if(mDistCoef.at<float>(0)!=0.0)
     {
+        //创建一个4行2列的矩阵（主要是用来保存图像边界4个坐标点）
         cv::Mat mat(4,2,CV_32F);
-        mat.at<float>(0,0)=0.0; mat.at<float>(0,1)=0.0;
-        mat.at<float>(1,0)=imLeft.cols; mat.at<float>(1,1)=0.0;
-        mat.at<float>(2,0)=0.0; mat.at<float>(2,1)=imLeft.rows;
-        mat.at<float>(3,0)=imLeft.cols; mat.at<float>(3,1)=imLeft.rows;
+        mat.at<float>(0,0)=0.0; mat.at<float>(0,1)=0.0;                 //左上
+        mat.at<float>(1,0)=imLeft.cols; mat.at<float>(1,1)=0.0;         //右上
+        mat.at<float>(2,0)=0.0; mat.at<float>(2,1)=imLeft.rows;         //左下
+        mat.at<float>(3,0)=imLeft.cols; mat.at<float>(3,1)=imLeft.rows; //右下
 
         // Undistort corners
+        //这里和前面的操作是一样的
+        // 调整mat的通道为2，矩阵的行列形状不变
+        //这个函数的原型是：cv::Mat::reshape(int cn,int rows=0) const
+        //其中cn为更改后的通道数，rows=0表示这个行将保持原来的参数不变
+        //不过根据手册发现这里的修改通道只是在逻辑上修改，并没有真正地操作数据
+        //这里调整通道的目的应该是这样的，下面的undistortPoints()函数接收的mat认为是2通道的，两个通道的数据正好组成了一个点的两个坐标
         mat=mat.reshape(2);
         cv::undistortPoints(mat,mat,mK,mDistCoef,cv::Mat(),mK);
         mat=mat.reshape(1);
 
-        mnMinX = min(mat.at<float>(0,0),mat.at<float>(2,0));
-        mnMaxX = max(mat.at<float>(1,0),mat.at<float>(3,0));
-        mnMinY = min(mat.at<float>(0,1),mat.at<float>(1,1));
-        mnMaxY = max(mat.at<float>(2,1),mat.at<float>(3,1));
+        //校正后的四个边界点已经不能够围成一个严格的矩形，因此在这个四边形的外侧加边框作为坐标的边界
+        mnMinX = min(mat.at<float>(0,0),mat.at<float>(2,0));    //左上和左下横坐标最小的
+        mnMaxX = max(mat.at<float>(1,0),mat.at<float>(3,0));    //右上和右下横坐标最大的
+        mnMinY = min(mat.at<float>(0,1),mat.at<float>(1,1));    //左上和右上纵坐标最小的
+        mnMaxY = max(mat.at<float>(2,1),mat.at<float>(3,1));    //左下和右下纵坐标最小的
 
     }
     else
     {
+        //如果之前矫正过，直接赋值
         mnMinX = 0.0f;
         mnMaxX = imLeft.cols;
         mnMinY = 0.0f;
