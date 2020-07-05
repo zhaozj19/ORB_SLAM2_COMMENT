@@ -40,10 +40,15 @@ class Map
 public:
     Map();
 
+    //向地图中增加关键帧
     void AddKeyFrame(KeyFrame* pKF);
+    //向地图中增加地图点
     void AddMapPoint(MapPoint* pMP);
+    //从地图中移除地图点
     void EraseMapPoint(MapPoint* pMP);
+    //从地图中移除关键帧
     void EraseKeyFrame(KeyFrame* pKF);
+    //
     void SetReferenceMapPoints(const std::vector<MapPoint*> &vpMPs);
     void InformNewBigChange();
     int GetLastBigChangeIdx();

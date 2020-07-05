@@ -30,25 +30,40 @@
 namespace ORB_SLAM2
 {
 
+//这个Converter类提供了一系列的转换操作
 class Converter
 {
 public:
+    //把描述子矩阵的每一行，保存在vector中。cv::Mat->cv::Mat(0)+cv::Mat(1)+...
     static std::vector<cv::Mat> toDescriptorVector(const cv::Mat &Descriptors);
 
+    //将cv::Mat形式的位姿转换成李代数形式SE3Quat
     static g2o::SE3Quat toSE3Quat(const cv::Mat &cvT);
+    //将以g2o::Sim3格式存储的位姿转换成为g2o::SE3Quat类型
+    //为啥没有这个函数的定义呀？？
     static g2o::SE3Quat toSE3Quat(const g2o::Sim3 &gSim3);
 
+    //将以g2o::SE3Quat格式存储的位姿转换成为cv::Mat格式
     static cv::Mat toCvMat(const g2o::SE3Quat &SE3);
+    //把Sim3转换成cv::Mat
     static cv::Mat toCvMat(const g2o::Sim3 &Sim3);
+    //把4x4的Eigen转换成cv::Mat
     static cv::Mat toCvMat(const Eigen::Matrix<double,4,4> &m);
+    //把3x3的Eigen（旋转矩阵）转换成cv::Mat
     static cv::Mat toCvMat(const Eigen::Matrix3d &m);
+    //把3x1的Eigen（平移向量）转换成cv::Mat
     static cv::Mat toCvMat(const Eigen::Matrix<double,3,1> &m);
+    //将给定的旋转矩阵和平移向量转换为以cv::Mat存储的李群SE3
     static cv::Mat toCvSE3(const Eigen::Matrix<double,3,3> &R, const Eigen::Matrix<double,3,1> &t);
 
+    //将cv::Mat类型数据转换成为3x1的Eigen矩阵
     static Eigen::Matrix<double,3,1> toVector3d(const cv::Mat &cvVector);
+    //将cv::Point3f转换成为Eigen中3x1的矩阵
     static Eigen::Matrix<double,3,1> toVector3d(const cv::Point3f &cvPoint);
+    //将一个3x3的cv::Mat矩阵转换成为Eigen中的矩阵
     static Eigen::Matrix<double,3,3> toMatrix3d(const cv::Mat &cvMat3);
 
+    //把旋转矩阵M转换成四元数
     static std::vector<float> toQuaternion(const cv::Mat &M);
 };
 
