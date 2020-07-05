@@ -32,10 +32,12 @@ float Frame::cx, Frame::cy, Frame::fx, Frame::fy, Frame::invfx, Frame::invfy;
 float Frame::mnMinX, Frame::mnMinY, Frame::mnMaxX, Frame::mnMaxY;
 float Frame::mfGridElementWidthInv, Frame::mfGridElementHeightInv;
 
+//默认构造函数
 Frame::Frame()
 {}
 
 //Copy Constructor
+//拷贝构造函数
 Frame::Frame(const Frame &frame)
     :mpORBvocabulary(frame.mpORBvocabulary), mpORBextractorLeft(frame.mpORBextractorLeft), mpORBextractorRight(frame.mpORBextractorRight),
      mTimeStamp(frame.mTimeStamp), mK(frame.mK.clone()), mDistCoef(frame.mDistCoef.clone()),
@@ -306,9 +308,11 @@ void Frame::AssignFeaturesToGrid()
     }
 }
 
+//提取灰度图的特征点
 void Frame::ExtractORB(int flag, const cv::Mat &im)
 {
     if(flag==0)
+    //这里用到了ORB类中的（）操作符
         (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors);
     else
         (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight);
@@ -751,39 +755,55 @@ void Frame::ComputeStereoMatches()
 }
 
 
+//计算RGBD图像的立体深度信息
+//更新depth和右图特征点的x坐标
 void Frame::ComputeStereoFromRGBD(const cv::Mat &imDepth)
 {
+    //首先初始化
     mvuRight = vector<float>(N,-1);
     mvDepth = vector<float>(N,-1);
 
     for(int i=0; i<N; i++)
     {
+        //分别得到未矫正的特征点和矫正之后的特征点
         const cv::KeyPoint &kp = mvKeys[i];
         const cv::KeyPoint &kpU = mvKeysUn[i];
 
+
+        //获取其横纵坐标，注意 NOTICE 是校正前的特征点的
         const float &v = kp.pt.y;
         const float &u = kp.pt.x;
 
+        //从深度图像中获取这个特征点对应的深度点
+        //NOTE 从这里看对深度图像进行去畸变处理是没有必要的,我们依旧可以直接通过未矫正的特征点的坐标来直接拿到深度数据
         const float d = imDepth.at<float>(v,u);
 
+        //如果这个特征点合法（大于0），那么就更新对用的深度值和右图的x坐标
+        //这里主要说一下右图x坐标的更新，是拿矫正之后的特征点的x坐标减去mbf/d（就是视差）
+        //因为在双目视觉中，有一个公式叫做z=fb/d，其中z为深度值，d为视差，f为x的焦距，b为基线，看得出来视差和深度值成反比
         if(d>0)
         {
             mvDepth[i] = d;
+            //注意这个地方不是加的，而是减的，是因为相机在向右移动，左图的像素在右图中的体现是偏左的
             mvuRight[i] = kpU.pt.x-mbf/d;
         }
     }
 }
 
+//将第i个特征点的像素坐标系转成世界坐标系
 cv::Mat Frame::UnprojectStereo(const int &i)
 {
+    //获取第i个关键点的深度值z
     const float z = mvDepth[i];
     if(z>0)
     {
+        //这里是像素坐标系坐标转成相机坐标系的坐标
         const float u = mvKeysUn[i].pt.x;
         const float v = mvKeysUn[i].pt.y;
         const float x = (u-cx)*z*invfx;
         const float y = (v-cy)*z*invfy;
         cv::Mat x3Dc = (cv::Mat_<float>(3,1) << x, y, z);
+        //然后再根据旋转矩阵和平移向量，将当前相机坐标转换成世界坐标系
         return mRwc*x3Dc+mOw;
     }
     else

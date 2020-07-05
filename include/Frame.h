@@ -128,46 +128,59 @@ public:
 
     // Search a match for each keypoint in the left image to a keypoint in the right image.
     // If there is a match, depth is computed and the right coordinate associated to the left keypoint is stored.
+    // 计算双目图像之间的匹配关系
     void ComputeStereoMatches();
 
     // Associate a "right" coordinate to a keypoint if there is valid depth in the depthmap.
+    //计算RGBD图像的立体深度信息
+    //更新depth和右图特征点的x坐标
     void ComputeStereoFromRGBD(const cv::Mat &imDepth);
 
     // Backprojects a keypoint (if stereo/depth info available) into 3D world coordinates.
+    //当某个特征点的深度信息或者双目信息有效时,将它反投影到三维世界坐标系中，i为特征点id
+    //这如何定义，深度有效与否呐？（大于0就有效？？？）
     cv::Mat UnprojectStereo(const int &i);
 
 public:
     // Vocabulary used for relocalization.
+    //ORB特征字典，用于重定位
     ORBVocabulary* mpORBvocabulary;
 
     // Feature extractor. The right is used only in the stereo case.
+    //ORB特征点的提取器
     ORBextractor* mpORBextractorLeft, *mpORBextractorRight;
 
     // Frame timestamp.
+    //时间戳
     double mTimeStamp;
 
     // Calibration matrix and OpenCV distortion parameters.
     //相机内参矩阵
     cv::Mat mK;
-    static float fx;
-    static float fy;
-    static float cx;
-    static float cy;
-    static float invfx;
-    static float invfy;
+    static float fx;        ///<x轴方向焦距
+    static float fy;        ///<y轴方向焦距
+    static float cx;        ///<x轴方向光心偏移
+    static float cy;        ///<y轴方向光心偏移
+    static float invfx;     ///<x轴方向焦距的逆
+    static float invfy;     ///<x轴方向焦距的逆
+    //去畸变参数矩阵
     cv::Mat mDistCoef;
 
     // Stereo baseline multiplied by fx.
+    //基线乘以fx（x方向的焦距）
     float mbf;
 
     // Stereo baseline in meters.
+    //双目相机中的基线
     float mb;
 
     // Threshold close/far points. Close points are inserted from 1 view.
     // Far points are inserted as in the monocular case from 2 views.
+    //远点和近点的深度阈值
     float mThDepth;
 
     // Number of KeyPoints.
+    //关键点的数量
     int N;
 
     // Vector of keypoints (original for visualization) and undistorted (actually used by the system).
@@ -180,7 +193,7 @@ public:
 
     // Corresponding stereo coordinate and depth for each keypoint.
     // "Monocular" keypoints have a negative value.
-    //mvuRight存储左图特征点对应再右图中的横坐标（u代表横坐标，因为纵坐标是相同的）
+    //mvuRight存储左图特征点对应在右图中的横坐标（u代表横坐标，因为纵坐标是相同的）
     std::vector<float> mvuRight;
     //mvDepth存储特征点深度
     //对于单目相机来说，这两个值都为-1
@@ -194,6 +207,7 @@ public:
     DBoW2::FeatureVector mFeatVec;
 
     // ORB descriptor, each row associated to a keypoint.
+    //左目照片和右目照片的特征点对应的描述子
     cv::Mat mDescriptors, mDescriptorsRight;
 
     // MapPoints associated to keypoints, NULL pointer if no association.
@@ -218,23 +232,26 @@ public:
     // Current and Next Frame id.
     
     //注意这个地方是类全局静态变量，在图像帧类中被初始化定义为0，每当有一个图像被送进来转换成帧的时候，这个变量都会+1
+    //下一帧id
     static long unsigned int nNextId;
+    //当前帧id
     long unsigned int mnId;
 
     // Reference Keyframe.
+    //参考关键帧（可以简单的理解为上一帧）
     KeyFrame* mpReferenceKF;
 
     // Scale pyramid info.
-    int mnScaleLevels;
-    float mfScaleFactor;
-    float mfLogScaleFactor;
-    vector<float> mvScaleFactors;
-    vector<float> mvInvScaleFactors;
-    vector<float> mvLevelSigma2;
-    vector<float> mvInvLevelSigma2;
+    int mnScaleLevels;                  //获取图像金字塔的层数
+    float mfScaleFactor;                //获取图像金字塔的缩放因子，就是配置文件里的1.2
+    float mfLogScaleFactor;             //计算每层缩放因子的自然对数
+    vector<float> mvScaleFactors;       //获取图像金字塔每层各自的缩放因子，比如第一层是1，第二层是1.2，第三层是1.2*1.2，。。。
+    vector<float> mvInvScaleFactors;    //获取图像金字塔每层各自的缩放因子的倒数
+    vector<float> mvLevelSigma2;        //获取图像金字塔每层各自缩放因子的平方
+    vector<float> mvInvLevelSigma2;     //获取图像金字塔每层各自缩放因子的平方的倒数
 
     // Undistorted Image Bounds (computed once).
-    //未校正图像的边界，只需要计算一次，因为是类的静态成员变量
+    //图像的边界，只需要计算一次，因为是类的静态成员变量
     static float mnMinX;
     static float mnMaxX;
     static float mnMinY;
@@ -251,12 +268,15 @@ private:
     // Undistort keypoints given OpenCV distortion parameters.
     // Only for the RGB-D case. Stereo must be already rectified!
     // (called in the constructor).
+    ////对特征点去畸变
     void UndistortKeyPoints();
 
     // Computes image bounds for the undistorted image (called in the constructor).
+    //计算去畸变后图片的边界（更新mnMinX、mnMaxX、mnMinY、mnMaxY四个值）
     void ComputeImageBounds(const cv::Mat &imLeft);
 
     // Assign keypoints to the grid for speed up feature matching (called in the constructor).
+    //把特征点分配到帧网格中
     void AssignFeaturesToGrid();
 
     // Rotation, translation and camera center
