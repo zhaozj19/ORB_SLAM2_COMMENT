@@ -41,6 +41,7 @@ public:
     ORBmatcher(float nnratio=0.6, bool checkOri=true);
 
     // Computes the Hamming distance between two ORB descriptors
+    //计算两个描述子之间的汉明距离
     static int DescriptorDistance(const cv::Mat &a, const cv::Mat &b);
 
     // Search matches between Frame keypoints and projected MapPoints. Returns number of matches

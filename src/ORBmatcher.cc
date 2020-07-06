@@ -38,6 +38,9 @@ const int ORBmatcher::TH_HIGH = 100;
 const int ORBmatcher::TH_LOW = 50;
 const int ORBmatcher::HISTO_LENGTH = 30;
 
+
+//ORB匹配器构造函数，nnratio代表最优评分和次优评分的比例，默认为0.6，checkOri代表是否考虑特征点的方向，默认为true
+//
 ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbCheckOrientation(checkOri)
 {
 }
@@ -1644,16 +1647,22 @@ void ORBmatcher::ComputeThreeMaxima(vector<int>* histo, const int L, int &ind1, 
 
 // Bit set count operation from
 // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+
+//计算两个描述子之间的汉明距离
 int ORBmatcher::DescriptorDistance(const cv::Mat &a, const cv::Mat &b)
 {
+    //a和b是特征描述子，8*32位
     const int *pa = a.ptr<int32_t>();
     const int *pb = b.ptr<int32_t>();
 
+    //dist用来保存汉明距离
     int dist=0;
 
+    //需要对每一个32位都计算汉明距离，所以i<8; pa++代表计算下一个32位的距离
     for(int i=0; i<8; i++, pa++, pb++)
     {
-        unsigned  int v = *pa ^ *pb;
+        //下面的操作就是计算两个32位的二进制之间的汉明距离了
+        unsigned  int v = *pa ^ *pb;    //异或运算，相同为0，不同为1
         v = v - ((v >> 1) & 0x55555555);
         v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
         dist += (((v + (v >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24;

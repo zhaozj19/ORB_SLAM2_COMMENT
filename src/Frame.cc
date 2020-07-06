@@ -578,29 +578,48 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
     }
 }
 
+//计算双目图像之间的匹配关系
+//首先是根据左图提取出来的特征点
 void Frame::ComputeStereoMatches()
 {
+    //右图存在的是左图特征点在右图中的横坐标
     mvuRight = vector<float>(N,-1.0f);
+    //深度图存放的是左图特征点的深度（可以计算出深度的特征点）
     mvDepth = vector<float>(N,-1.0f);
 
+    //这个是ORB描述子之间的阈值，如果小于这个阈值就认为是成功的匹配
     const int thOrbDist = (ORBmatcher::TH_HIGH+ORBmatcher::TH_LOW)/2;
 
+    //得到完整图像的行数
     const int nRows = mpORBextractorLeft->mvImagePyramid[0].rows;
 
     //Assign keypoints to row table
+    //size_t表示C++容器中的元素个数，std::size_t的优点是不需要判断小于0
+    //vRowIndices这个变量的目的是为了减小特征点搜索范围
+    //举个例子，如果说左图的大小为200*200，在这张图上检测出来50个特征点，那么如何在右图的某一部分区域来找到对应的特征点呐？
+    //是这样的，把左图某一个特征点对应的y，然后把y-2,y-1,y,y+1,y+2这些值存储在vRowIndices中的某一个vector中
+    //然后在就这么多行中去搜索对应的特征点，这样就可以起到减小特征点搜索范围的目的
     vector<vector<size_t> > vRowIndices(nRows,vector<size_t>());
 
+    //为每一行的vector分配200个大小（这里应该是一个经验值）
     for(int i=0; i<nRows; i++)
         vRowIndices[i].reserve(200);
 
+    //右图图像中特征点的个数
     const int Nr = mvKeysRight.size();
 
+    //初始化上面定义的vRowIndices变量
     for(int iR=0; iR<Nr; iR++)
     {
+        //首先得到右图中每一个特征点的y坐标
         const cv::KeyPoint &kp = mvKeysRight[iR];
         const float &kpY = kp.pt.y;
+        //然后根据这个特征点所在的金字塔层数，来动态地得到r地值
+        //如果层数较低，则不确定性较小，那么r也较小；如果层数较高，那么不确定性较大，r也较大。
+        //如果特征点在金字塔第一层，则搜索范围为:正负2（其实金字塔越往上，一个像素就代表了好几个像素）
         const float r = 2.0f*mvScaleFactors[mvKeysRight[iR].octave];
         const int maxr = ceil(kpY+r);
+        //这里的minr有可能小于0吗？
         const int minr = floor(kpY-r);
 
         for(int yi=minr;yi<=maxr;yi++)
@@ -609,145 +628,213 @@ void Frame::ComputeStereoMatches()
 
     // Set limits for search
     const float minZ = mb;
-    const float minD = 0;
-    const float maxD = mbf/minZ;
+    const float minD = 0;               //minD代表最小视差，这里设置为0也就代表了最大深度
+    const float maxD = mbf/minZ;        //maxD代表最大视差，也就是最小深度；这个地方mbf/minZ得到地是fx焦距呀。。。。。（这都是经验吗？？？）
 
     // For each left keypoint search a match in the right image
+    //vDistIdx保存每一个左图特征点在特征匹配的过程中，得到的最佳距离 bestDist (SAD匹配最小匹配偏差)和左图特征点id
     vector<pair<int, int> > vDistIdx;
     vDistIdx.reserve(N);
 
+    //开始对每一个左图特征点进行匹配
     for(int iL=0; iL<N; iL++)
     {
+        //得到左图特征点kpL
         const cv::KeyPoint &kpL = mvKeys[iL];
+        //得到kpL的金字塔层级
         const int &levelL = kpL.octave;
+        //y坐标和x坐标
         const float &vL = kpL.pt.y;
         const float &uL = kpL.pt.x;
 
+        //获取这个特征点所在行，在右图中可能的匹配点，注意这里 vRowIndices 存储的是右图的特征点索引
         const vector<size_t> &vCandidates = vRowIndices[vL];
 
+        //如果左图的特征点在右图中没有对应的特征点，就跳过左图这个特征点
         if(vCandidates.empty())
             continue;
 
-        const float minU = uL-maxD;
-        const float maxU = uL-minD;
+        
+        const float minU = uL-maxD;         //minU代表匹配出来的右图特征点的最小x坐标
+        const float maxU = uL-minD;         //maxU代表匹配出来的右图特征点的最大x坐标，其实这么结果还是uL，因为minD被设置为了0
 
+        //如果最大匹配范围小于0，就返回
         if(maxU<0)
             continue;
 
+        //设置ORB描述子之间的最佳距离；ORBmatcher::TH_HIGH，被定义为100
         int bestDist = ORBmatcher::TH_HIGH;
+        //左图特征点对应的右图特征点的id（被定义为size_t类型，都是细节啊。）
         size_t bestIdxR = 0;
 
+        //左图特征点的描述子
         const cv::Mat &dL = mDescriptors.row(iL);
 
         // Compare descriptor to right keypoints
+        //遍历右目所有可能的匹配点，找出最佳匹配点（描述子距离最小）
+        //vCandidates存储的是左图特征点所在的行在右图中对应的特征点，如果这一行有5个特征点，那么用这5个特征点和左图特征点分别比较
         for(size_t iC=0; iC<vCandidates.size(); iC++)
         {
+            //获取右图对应的特征点id
             const size_t iR = vCandidates[iC];
+            //得到右图特征点
             const cv::KeyPoint &kpR = mvKeysRight[iR];
 
+            //如果左右特征点的金字塔层级相差在2以上，就认为是不可靠的
             if(kpR.octave<levelL-1 || kpR.octave>levelL+1)
                 continue;
 
+            //得到右图特征点的x坐标（也就是u坐标）
             const float &uR = kpR.pt.x;
 
+            //如果符合最小和最大坐标的范围，就计算描述子之间的汉明距离
             if(uR>=minU && uR<=maxU)
-            {
+            {   
+                //得到右图特征点对应的描述子
                 const cv::Mat &dR = mDescriptorsRight.row(iR);
+                //计算它们之间的距离
                 const int dist = ORBmatcher::DescriptorDistance(dL,dR);
 
+
+                //距离还是越小越好的（所以ORBmatcher::TH_HIGH还是一个阈值，并不是最好的值）
                 if(dist<bestDist)
                 {
                     bestDist = dist;
-                    bestIdxR = iR;
+                    bestIdxR = iR;      //同时把右图最优特征点id也记录下来
                 }
             }
         }
 
-        // Subpixel match by correlation
+        // Subpixel match by correlation 
+        //下面开始SAD算法，对右图特征点进行亚像素级别的调整
         if(bestDist<thOrbDist)
         {
             // coordinates in image pyramid at keypoint scale
-            const float uR0 = mvKeysRight[bestIdxR].pt.x;
-            const float scaleFactor = mvInvScaleFactors[kpL.octave];
-            const float scaleduL = round(kpL.pt.x*scaleFactor);
-            const float scaledvL = round(kpL.pt.y*scaleFactor);
-            const float scaleduR0 = round(uR0*scaleFactor);
+            
+            //这里特征点在金字塔图层中缩放后的坐标，是为了下一步SAD算法计算滑动窗口做准备
+            const float uR0 = mvKeysRight[bestIdxR].pt.x;               //得到原始右图特征点横坐标
+            const float scaleFactor = mvInvScaleFactors[kpL.octave];    //左图特征点所在金字塔的缩放因子的倒数
+            const float scaleduL = round(kpL.pt.x*scaleFactor);         //左图特征点所在金字塔图层的横坐标
+            const float scaledvL = round(kpL.pt.y*scaleFactor);         //左图特征点所在金字塔图层的纵坐标
+            const float scaleduR0 = round(uR0*scaleFactor);             //右图特征点所在金字塔图层的横坐标
 
             // sliding window search
+            //w为SAD算法滑动窗口的移动范围
+            //滑动窗口是以左图特征点为中心，在缩放后的图片上，扩展出11*11的窗口，这也是为什么w=5的原因
             const int w = 5;
+            //得到以左图特征点为中心的小窗口
             cv::Mat IL = mpORBextractorLeft->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduL-w,scaleduL+w+1);
+            //类型设置为浮点型
             IL.convertTo(IL,CV_32F);
+            //将小窗口内所有像素的像素值减去中心点的像素值
             IL = IL - IL.at<float>(w,w) *cv::Mat::ones(IL.rows,IL.cols,CV_32F);
 
+            //用来保存在SAD匹配中得到的最优的SAD距离，这里先默认为INT_MAX
             int bestDist = INT_MAX;
+            //用来保存最优的SAD匹配所对应的修正量
             int bestincR = 0;
+            //滑动窗口的范围是（-L，+L）
             const int L = 5;
+            //存储的是SAD比较出来的距离
             vector<float> vDists;
             vDists.resize(2*L+1);
 
+            //滑动的边缘检测
+            //iniu是，以右图特征点为中心构造出来的小窗口，scaleduR0为原本的右图特征点对应的x坐标，
+            //L为特征点的偏移量（因为在比较SAD距离的时候，右图特征点横坐标是不断变化的，这样才能找到最优的SAD，而这时候的L也就是那个修正量）
+            //w就是用来构造边界了，因为边界一直距离中心特征点是5，w才是死的，下面的for循环时按照L的范围来的
+            //下面的if判断就是看看 构造出来的小窗口是不是边界出离了 这个金字塔图层的边界，出离了的话，就不要这个了
             const float iniu = scaleduR0+L-w;
             const float endu = scaleduR0+L+w+1;
             if(iniu<0 || endu >= mpORBextractorRight->mvImagePyramid[kpL.octave].cols)
                 continue;
 
+            //这里开始判断左图小窗口和右图小窗口之间的SAD距离（对应像素差的绝对值之和）
+            //注意啦！在比较的过程中，左图小窗口时不变的，右图小窗口是不断往右移动的
             for(int incR=-L; incR<=+L; incR++)
             {
+                //获取右图小窗口
                 cv::Mat IR = mpORBextractorRight->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduR0+incR-w,scaleduR0+incR+w+1);
+                //转换为浮点型
                 IR.convertTo(IR,CV_32F);
+                //和上面一样，所有像素的像素值全部减去中心特征点的像素值
                 IR = IR - IR.at<float>(w,w) *cv::Mat::ones(IR.rows,IR.cols,CV_32F);
 
+                //用opencv函数来计算SAD距离，就是一范数，计算差的绝对值之和
                 float dist = cv::norm(IL,IR,cv::NORM_L1);
+                //更新最优SAD距离，以及最优的修正量（右图特征点的x坐标的偏移量）
                 if(dist<bestDist)
                 {
                     bestDist =  dist;
                     bestincR = incR;
                 }
 
+                //这里之所以用L+incR的形式作为下标，我想是因为想让下表从0-2L，一共2L+1个下标
+                //这样画出来函数图像的话，应该是一个开口向上的抛物线，在下标为L的地方，SAD距离最小（按道理是这样的，也不绝对）
                 vDists[L+incR] = dist;
             }
 
+            //如果偏偏 小窗口在最极端的两侧的话，就认为是失败的匹配？
+            //应该时因为 按照常理最优的SAD不应该在两端出现，否则就认为是失败，也就是说修正量应该是很小的数，不可能太大
             if(bestincR==-L || bestincR==L)
                 continue;
 
             // Sub-pixel match (Parabola fitting)
+            //这里做抛物线拟合，找到谷底的亚像素最优值
+            //也就是说，假如下标5，6，7，按道理来说6为谷底，但是因为这是一个不完全的抛物线，最优值存在于6.2或者5.8
+            //就是这个意思
             const float dist1 = vDists[L+bestincR-1];
             const float dist2 = vDists[L+bestincR];
             const float dist3 = vDists[L+bestincR+1];
 
+
+            //这里的deltaR为什么这样计算，我还不知道。。
             const float deltaR = (dist1-dist3)/(2.0f*(dist1+dist3-2.0f*dist2));
 
+            //抛物线拟合得到的亚像素偏移不能超过一个像素，否则放弃求该特征点的深度
             if(deltaR<-1 || deltaR>1)
                 continue;
 
             // Re-scaled coordinate
+            //计算右图特征点修正之后，在原始图的横坐标
             float bestuR = mvScaleFactors[kpL.octave]*((float)scaleduR0+(float)bestincR+deltaR);
 
+            //计算左右特征点的视差
             float disparity = (uL-bestuR);
 
+            //判断视差是否合理
             if(disparity>=minD && disparity<maxD)
-            {
+            {   
+                //若视差为负,则说明视差本身非常低小以至于计算机在进行数值计算时出现了误差
+                //就给它设置为0.01
                 if(disparity<=0)
                 {
                     disparity=0.01;
                     bestuR = uL-0.01;
                 }
-                mvDepth[iL]=mbf/disparity;
-                mvuRight[iL] = bestuR;
-                vDistIdx.push_back(pair<int,int>(bestDist,iL));
+                mvDepth[iL]=mbf/disparity;          //记录深度值
+                mvuRight[iL] = bestuR;              //记录特征点在右图中对应的横坐标
+                vDistIdx.push_back(pair<int,int>(bestDist,iL));     //记录左图特征点的最优SAD距离，以及特征点id
             }
         }
     }
 
+    //按照SAD距离，从大到小排序
     sort(vDistIdx.begin(),vDistIdx.end());
+    //取一个中间值作为阈值
     const float median = vDistIdx[vDistIdx.size()/2].first;
-    const float thDist = 1.5f*1.4f*median;
+    const float thDist = 1.5f*1.4f*median;//又是经验吧。。
 
+    //因为是要剔除SAD过于大的特征点，所以倒着来
+    //（为什么要设置这么多条件，一定要经过层层筛选，才能计算出来良好的配对特征点吗？？不怕最后搞得没有多少配对成功的特征点了嘛）
     for(int i=vDistIdx.size()-1;i>=0;i--)
     {
+        //只要有一开始小于阈值，那么 往后的就都小于阈值了
         if(vDistIdx[i].first<thDist)
             break;
         else
         {
+            //还是设置为-1
             mvuRight[vDistIdx[i].second]=-1;
             mvDepth[vDistIdx[i].second]=-1;
         }
