@@ -60,58 +60,79 @@ Frame::Frame(const Frame &frame)
 }
 
 //双目模式的帧构造函数
-Frame::Frame(const cv::Mat &imLeft, 
-            const cv::Mat &imRight, 
-            const double &timeStamp, 
-            ORBextractor* extractorLeft, 
-            ORBextractor* extractorRight, 
-            ORBVocabulary* voc, 
-            cv::Mat &K, 
-            cv::Mat &distCoef, 
-            const float &bf, 
-            const float &thDepth)
+Frame::Frame(const cv::Mat &imLeft,             //左目灰度图
+            const cv::Mat &imRight,             //右目灰度图
+            const double &timeStamp,            //时间戳
+            ORBextractor* extractorLeft,        //左目灰度图ORB特征提取器
+            ORBextractor* extractorRight,       //右目灰度图ORB特征提取器
+            ORBVocabulary* voc,                 //ORB字典
+            cv::Mat &K,                         //相机内参
+            cv::Mat &distCoef,                  //去畸变参数
+            const float &bf,                    //baseline*fx
+            const float &thDepth)               //baseline的若干倍
     :mpORBvocabulary(voc),mpORBextractorLeft(extractorLeft),mpORBextractorRight(extractorRight), mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mpReferenceKF(static_cast<KeyFrame*>(NULL))
 {
     // Frame ID
+    //获取当前帧ID，并且更新下一帧ID
     mnId=nNextId++;
 
     // Scale Level Info
-    mnScaleLevels = mpORBextractorLeft->GetLevels();
-    mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
-    mfLogScaleFactor = log(mfScaleFactor);
-    mvScaleFactors = mpORBextractorLeft->GetScaleFactors();
-    mvInvScaleFactors = mpORBextractorLeft->GetInverseScaleFactors();
-    mvLevelSigma2 = mpORBextractorLeft->GetScaleSigmaSquares();
-    mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
+    mnScaleLevels = mpORBextractorLeft->GetLevels();                        //获取图像金字塔层数
+    mfScaleFactor = mpORBextractorLeft->GetScaleFactor();                   //获取金字塔缩放因子，配置文件是1.2
+    mfLogScaleFactor = log(mfScaleFactor);                                  //金字塔缩放因子的对数
+    mvScaleFactors = mpORBextractorLeft->GetScaleFactors();                 //获取金字塔的每层缩放因子
+    mvInvScaleFactors = mpORBextractorLeft->GetInverseScaleFactors();       //获取金字塔每层缩放因子的倒数
+    mvLevelSigma2 = mpORBextractorLeft->GetScaleSigmaSquares();             //获取金字塔每层缩放因子的平方
+    mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();   //获取金字塔每层缩放因子平方的倒数
 
     // ORB extraction
-    thread threadLeft(&Frame::ExtractORB,this,0,imLeft);
+    //对左右两张图片进行ORB特征提取
+    //首先定义了两个线程threadLeft和threadRight，
+    thread threadLeft(  &Frame::ExtractORB,         //执行该线程的主函数
+                        this,                       //父线程的指针
+                        0,                          //0代表左图，1代表右图
+                        imLeft);                    //灰度图
     thread threadRight(&Frame::ExtractORB,this,1,imRight);
-    threadLeft.join();
+    threadLeft.join();      //父进程等待子进程执行完毕之后再继续执行
     threadRight.join();
 
+    //左目的特征点数量
     N = mvKeys.size();
 
     if(mvKeys.empty())
         return;
 
+    //对特征点去畸变
     UndistortKeyPoints();
 
+    //计算双目图像之间的匹配关系，其实是根据左图特征点，来对右图特征点的x坐标进行微调，并且更新特征点的深度图
     ComputeStereoMatches();
 
-    mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));    
+    //先把所有的特征点对应的地图点都设置为NULL
+    mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));  
+    //并且默认这些地图点都不是离群点  
     mvbOutlier = vector<bool>(N,false);
 
 
     // This is done only for the first Frame (or after a change in the calibration)
+    //只有第一帧的时候会初始化，或者在重定位之后
+    /** 判断是否需要进行进行特殊初始化,这个过程一般是在第一帧或者是重定位之后进行.主要操作有:\n
+     *      - 计算未校正图像的边界 Frame::ComputeImageBounds() 
+     *      - 计算一个像素列相当于几个（<1）图像网格列
+     *      - 给相机的内参数赋值
+     *      - 标志复位
+     */ 
     if(mbInitialComputations)
     {
+        //计算去畸变之后图像的边界
         ComputeImageBounds(imLeft);
 
+        //特征点坐标乘以以下两个变量就会确定特征点落在哪个格子
         mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/(mnMaxX-mnMinX);
         mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/(mnMaxY-mnMinY);
 
+        //焦距和图像坐标系中心点
         fx = K.at<float>(0,0);
         fy = K.at<float>(1,1);
         cx = K.at<float>(0,2);
@@ -122,59 +143,78 @@ Frame::Frame(const cv::Mat &imLeft,
         mbInitialComputations=false;
     }
 
+    //得到双目的基线
     mb = mbf/fx;
 
+    //将提取出来的特征点分配到帧的网格中
     AssignFeaturesToGrid();
 }
 
 //RGBD模式的帧构造函数
-Frame::Frame(const cv::Mat &imGray, 
-            const cv::Mat &imDepth, 
-            const double &timeStamp, 
-            ORBextractor* extractor,
-            ORBVocabulary* voc, 
-            cv::Mat &K, 
-            cv::Mat &distCoef, 
-            const float &bf, 
-            const float &thDepth)
+Frame::Frame(const cv::Mat &imGray,             //灰度图
+            const cv::Mat &imDepth,             //深度图
+            const double &timeStamp,            //时间戳
+            ORBextractor* extractor,            //ORB特征提取器
+            ORBVocabulary* voc,                 //ORB字典
+            cv::Mat &K,                         //相机内参
+            cv::Mat &distCoef,                  //相机的去畸变参数
+            const float &bf,                    //baseline*fx
+            const float &thDepth)               //baseline的若干倍
     :mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
 {
     // Frame ID
+    //获取本帧ID，并且更新下一帧ID
     mnId=nNextId++;
 
-    // Scale Level Info
-    mnScaleLevels = mpORBextractorLeft->GetLevels();
-    mfScaleFactor = mpORBextractorLeft->GetScaleFactor();    
-    mfLogScaleFactor = log(mfScaleFactor);
-    mvScaleFactors = mpORBextractorLeft->GetScaleFactors();
-    mvInvScaleFactors = mpORBextractorLeft->GetInverseScaleFactors();
-    mvLevelSigma2 = mpORBextractorLeft->GetScaleSigmaSquares();
-    mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
+    // Scale Level Info 
+    mnScaleLevels = mpORBextractorLeft->GetLevels();                        //获取图像金字塔层数
+    mfScaleFactor = mpORBextractorLeft->GetScaleFactor();                   //获取金字塔缩放因子，配置文件是1.2
+    mfLogScaleFactor = log(mfScaleFactor);                                  //金字塔缩放因子的对数
+    mvScaleFactors = mpORBextractorLeft->GetScaleFactors();                 //获取金字塔的每层缩放因子
+    mvInvScaleFactors = mpORBextractorLeft->GetInverseScaleFactors();       //获取金字塔每层缩放因子的倒数
+    mvLevelSigma2 = mpORBextractorLeft->GetScaleSigmaSquares();             //获取金字塔每层缩放因子的平方
+    mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();   //获取金字塔每层缩放因子平方的倒数
 
     // ORB extraction
+    //提取灰度图特征点
     ExtractORB(0,imGray);
 
+    //获取特征点数量N
     N = mvKeys.size();
 
     if(mvKeys.empty())
         return;
 
+    //对特征点去畸变
     UndistortKeyPoints();
 
+    //通过深度图，来计算特征点在右图中的x坐标
     ComputeStereoFromRGBD(imDepth);
 
+    //先把所有的特征点对应的地图点都设置为NULL
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
+    //并且默认这些地图点都不是离群点
     mvbOutlier = vector<bool>(N,false);
 
     // This is done only for the first Frame (or after a change in the calibration)
+    //只有第一帧的时候会初始化，或者在重定位之后
+    /** 判断是否需要进行进行特殊初始化,这个过程一般是在第一帧或者是重定位之后进行.主要操作有:\n
+     *      - 计算未校正图像的边界 Frame::ComputeImageBounds() 
+     *      - 计算一个像素列相当于几个（<1）图像网格列
+     *      - 给相机的内参数赋值
+     *      - 标志复位
+     */ 
     if(mbInitialComputations)
     {
+        //计算去畸变之后图像的边界
         ComputeImageBounds(imGray);
 
+        //特征点坐标乘以以下两个变量就会确定特征点落在哪个格子
         mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX);
         mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY);
 
+        //焦距和图像坐标系中心点
         fx = K.at<float>(0,0);
         fy = K.at<float>(1,1);
         cx = K.at<float>(0,2);
@@ -187,6 +227,7 @@ Frame::Frame(const cv::Mat &imGray,
 
     mb = mbf/fx;
 
+    //将提取出来的特征点分配到帧的网格中
     AssignFeaturesToGrid();
 }
 
@@ -341,6 +382,7 @@ void Frame::UpdatePoseMatrices()
     mOw = -mRcw.t()*mtcw;
 }
 
+// 判断路标点是否在视野中
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 {
     pMP->mbTrackInView = false;
@@ -399,11 +441,28 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
     return true;
 }
 
+
+//获取指定区域内的特征点ID
+//区域中心x坐标
+//区域中心y坐标
+//区域的半径r
+//搜索的图像金字塔层数的下限,也可以理解为最小尺度
+//搜索的图像金字塔层数的上限，同样可以理解为最大尺度
+//返回包含有这个区域内所有特征点的向量，该向量中存储的的是特征点的序号
 vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const float  &r, const int minLevel, const int maxLevel) const
 {
+    //定义结果向量，预先分配N个大小
     vector<size_t> vIndices;
     vIndices.reserve(N);
 
+    //检查圆形区域是否在图像中，具体做法是分别求圆形搜索区域的上下左右四个边界是否能够满足图像的边界条件。
+    //这里的边界条件以圆的左边界为例，就是首先求出左边界所在的图像网格列，然后判断这个网格列位置是否超过了图像网格的上限。
+
+    //下面的这段计算的代码其实可以这样理解：
+	//首先(mnMaxX-mnMinX)/FRAME_GRID_COLS表示每列网格可以平均分得几个像素坐标的列
+	//那么它的倒数，就可以表示每个像素列相当于多少（<1）个网格的列
+	//而前面的(x-mnMinX-r)，可以看做是从图像的左边界到半径r的圆的左边界区域占的像素列数
+	//两者相乘，就是求出那个半径为r的圆的左侧边界在那个网格列中。这个变量的名其实也是这个意思
     const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv));
     if(nMinCellX>=FRAME_GRID_COLS)
         return vIndices;

@@ -118,12 +118,20 @@ public:
 
     // Check if a MapPoint is in the frustum of the camera
     // and fill variables of the MapPoint to be used by the tracking
+    // 判断路标点是否在视野中
     bool isInFrustum(MapPoint* pMP, float viewingCosLimit);
 
     // Compute the cell of a keypoint (return false if outside the grid)
     //计算kp关键点，属于哪个cell，算出来之后以引用的方式得到cell的横坐标和纵坐标，如果失败就返回false
     bool PosInGrid(const cv::KeyPoint &kp, int &posX, int &posY);
 
+    //获取指定区域内的特征点ID
+    //区域中心x坐标
+    //区域中心y坐标
+    //区域的半径r
+    //搜索的图像金字塔层数的下限,也可以理解为最小尺度
+    //搜索的图像金字塔层数的上限，同样可以理解为最大尺度
+    //返回包含有这个区域内所有特征点的向量，该向量中存储的的是特征点的序号
     vector<size_t> GetFeaturesInArea(const float &x, const float  &y, const float  &r, const int minLevel=-1, const int maxLevel=-1) const;
 
     // Search a match for each keypoint in the left image to a keypoint in the right image.
