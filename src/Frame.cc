@@ -385,58 +385,82 @@ void Frame::UpdatePoseMatrices()
 // 判断路标点是否在视野中
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 {
+    //pMp地图点是否需要重投影的标志，这里默认为否
+    //一个地图点是否需要重投影需要多重判断，isInFrustum只是其中一环
     pMP->mbTrackInView = false;
 
     // 3D in absolute coordinates
+    //获得该地图点的世界坐标
     cv::Mat P = pMP->GetWorldPos(); 
 
     // 3D in camera coordinates
-    const cv::Mat Pc = mRcw*P+mtcw;
-    const float &PcX = Pc.at<float>(0);
+    //然后根据当前帧的mRcw和mtcw（分别是从世界坐标系到当前帧的相机坐标系的旋转矩阵和平移向量）
+    const cv::Mat Pc = mRcw*P+mtcw;     //Pc是地图点在当前帧相机坐标系下的相机坐标
+    const float &PcX = Pc.at<float>(0); 
     const float &PcY= Pc.at<float>(1);
     const float &PcZ = Pc.at<float>(2);
 
     // Check positive depth
+    //检查这个地图点在当前帧的相机坐标系下，是否有正的深度.如果是负的，就说明它在当前帧下不在相机视野中，也无法在当前帧下进行重投影.
     if(PcZ<0.0f)
         return false;
 
     // Project in image and check it is not outside
+    //把相机坐标系下的坐标转换成像素坐标系坐标系（得到u和v）
     const float invz = 1.0f/PcZ;
     const float u=fx*PcX*invz+cx;
     const float v=fy*PcY*invz+cy;
 
+    //如果得到的u和v在图像的区域之外就返回false，就代表该地图点，无法在当前帧下进行重投影
     if(u<mnMinX || u>mnMaxX)
         return false;
     if(v<mnMinY || v>mnMaxY)
         return false;
 
     // Check distance is in the scale invariance region of the MapPoint
+    // 计算MapPoint到相机中心的距离, 并判断是否在尺度变化的距离内
+    // 这里所说的尺度变化是指地图点到相机中心距离的一段范围，如果计算出的地图点到相机中心距离不在这个范围的话就认为这个点在 
+    // 当前帧相机位姿下不能够得到正确、有效、可靠的观测，就要跳过.
+    //范围通过pMp的两个成员函数得到
     const float maxDistance = pMP->GetMaxDistanceInvariance();
     const float minDistance = pMP->GetMinDistanceInvariance();
+    //得到当前3D地图点距离当前帧相机光心的距离
     const cv::Mat PO = P-mOw;
     const float dist = cv::norm(PO);
 
+    //如果不在允许的尺度变化范围内，认为重投影不可靠
     if(dist<minDistance || dist>maxDistance)
         return false;
 
    // Check viewing angle
+   //计算当前视角和平均视角夹角的余弦值, 若小于cos(60), 即夹角大于60度则返回
     cv::Mat Pn = pMP->GetNormal();
 
+    // 计算当前视角和平均视角夹角的余弦值，注意平均视角为单位向量 
     const float viewCos = PO.dot(Pn)/dist;
 
+    //如果大于规定的阈值，认为这个点太偏了，重投影不可靠，返回
     if(viewCos<viewingCosLimit)
         return false;
 
     // Predict scale in the image
+    // 根据深度预测尺度（对应特征点在一层）
+    /** 经过了上面的重重考验，说明这个地图点可以被重投影了。接下来需要记录关于这个地图点的一些信息*/
+     
+    //注意在特征点提取的过程中,图像金字塔的不同的层代表着特征点的不同的尺度
+    /** 使用 MapPoint::PredictScale() 来预测该地图点在现有距离 dist 下时，在当前帧
+     * 的图像金字塔中，所可能对应的尺度。
+     * 其实也就是预测可能会在哪一层。这个信息将会被保存在这个地图点对象的 MapPoint::mnTrackScaleLevel 中。
+    */
     const int nPredictedLevel = pMP->PredictScale(dist,this);
 
     // Data used by the tracking
-    pMP->mbTrackInView = true;
-    pMP->mTrackProjX = u;
-    pMP->mTrackProjXR = u - mbf*invz;
-    pMP->mTrackProjY = v;
-    pMP->mnTrackScaleLevel= nPredictedLevel;
-    pMP->mTrackViewCos = viewCos;
+    pMP->mbTrackInView = true;                  //通过置位标记 MapPoint::mbTrackInView 来表示这个地图点要被投影
+    pMP->mTrackProjX = u;                       //该地图点投影在左侧图像的像素横坐标
+    pMP->mTrackProjXR = u - mbf*invz;           //bf/z其实是视差，为了求右图像中对应点的横坐标就得这样减了～
+    pMP->mTrackProjY = v;                       //该地图点投影在左侧图像的像素纵坐标
+    pMP->mnTrackScaleLevel= nPredictedLevel;    //存储了根据深度预测的尺度
+    pMP->mTrackViewCos = viewCos;               //保存当前视角和平均视角夹角的余弦值
 
     return true;
 }

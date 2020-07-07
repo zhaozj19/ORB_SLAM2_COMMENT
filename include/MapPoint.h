@@ -43,7 +43,7 @@ public:
     MapPoint(const cv::Mat &Pos,  Map* pMap, Frame* pFrame, const int &idxF);
 
     void SetWorldPos(const cv::Mat &Pos);
-    cv::Mat GetWorldPos();
+    cv::Mat GetWorldPos();      //获取地图点的世界坐标
 
     cv::Mat GetNormal();
     KeyFrame* GetReferenceKeyFrame();
