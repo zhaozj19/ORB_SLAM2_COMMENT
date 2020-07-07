@@ -31,7 +31,9 @@ namespace ORB_SLAM2
 
 FrameDrawer::FrameDrawer(Map* pMap):mpMap(pMap)
 {
+    //初始化帧的Mat
     mState=Tracking::SYSTEM_NOT_READY;
+    //大小为640*480
     mIm = cv::Mat(480,640,CV_8UC3, cv::Scalar(0,0,0));
 }
 
@@ -46,27 +48,32 @@ cv::Mat FrameDrawer::DrawFrame()
 
     //Copy variables within scoped mutex
     {
+        // 加互斥锁，避免与Update函数中图像拷贝发生冲突
         unique_lock<mutex> lock(mMutex);
         state=mState;
         if(mState==Tracking::SYSTEM_NOT_READY)
             mState=Tracking::NO_IMAGES_YET;
 
+        //这里使用copyTo进行深拷贝是因为后面会把单通道灰度图像转为3通道图像
         mIm.copyTo(im);
 
         if(mState==Tracking::NOT_INITIALIZED)
         {
+            //获取当前帧\参考帧的特征点,并且得到他们的匹配关系
             vCurrentKeys = mvCurrentKeys;
             vIniKeys = mvIniKeys;
             vMatches = mvIniMatches;
         }
         else if(mState==Tracking::OK)
         {
+            //当系统处于运动追踪状态时
             vCurrentKeys = mvCurrentKeys;
             vbVO = mvbVO;
             vbMap = mvbMap;
         }
         else if(mState==Tracking::LOST)
         {
+            //跟丢的时候就获得当前帧的特征点就可以了
             vCurrentKeys = mvCurrentKeys;
         }
     } // destroy scoped mutex -> release mutex
@@ -125,7 +132,7 @@ cv::Mat FrameDrawer::DrawFrame()
     return imWithInfo;
 }
 
-
+//就是现实一些SLAM模式，当前帧特征点数量，地图点数量，匹配数量
 void FrameDrawer::DrawTextInfo(cv::Mat &im, int nState, cv::Mat &imText)
 {
     stringstream s;
@@ -164,22 +171,28 @@ void FrameDrawer::DrawTextInfo(cv::Mat &im, int nState, cv::Mat &imText)
 
 }
 
+
+//将跟踪线程的数据拷贝到绘图线程（图像、特征点、地图、跟踪状态）
 void FrameDrawer::Update(Tracking *pTracker)
 {
+    //加互斥锁，防止和绘图函数起冲突
     unique_lock<mutex> lock(mMutex);
-    pTracker->mImGray.copyTo(mIm);
-    mvCurrentKeys=pTracker->mCurrentFrame.mvKeys;
-    N = mvCurrentKeys.size();
-    mvbVO = vector<bool>(N,false);
+    pTracker->mImGray.copyTo(mIm);      //拷贝跟踪线程的帧
+    mvCurrentKeys=pTracker->mCurrentFrame.mvKeys;   //拷贝跟踪线程的帧的特征点
+    N = mvCurrentKeys.size();           //获取追踪线程的帧的特征点数量
+    mvbVO = vector<bool>(N,false);      //初始化
     mvbMap = vector<bool>(N,false);
-    mbOnlyTracking = pTracker->mbOnlyTracking;
+    mbOnlyTracking = pTracker->mbOnlyTracking;      //mbOnlyTracking等于false表示正常VO模式（有地图更新）
 
 
+    //如果上一帧的时候,追踪器没有进行初始化
     if(pTracker->mLastProcessedState==Tracking::NOT_INITIALIZED)
     {
+        //那么就要获取参考帧的特征点和匹配信息
         mvIniKeys=pTracker->mInitialFrame.mvKeys;
         mvIniMatches=pTracker->mvIniMatches;
     }
+    ////如果上一帧是在正常跟踪
     else if(pTracker->mLastProcessedState==Tracking::OK)
     {
         for(int i=0;i<N;i++)
@@ -189,14 +202,17 @@ void FrameDrawer::Update(Tracking *pTracker)
             {
                 if(!pTracker->mCurrentFrame.mvbOutlier[i])
                 {
+                    ////该mappoints可以被多帧观测到，则为有效的地图点
                     if(pMP->Observations()>0)
                         mvbMap[i]=true;
                     else
+                        //否则表示这个特征点是在当前帧中第一次提取得到的点
                         mvbVO[i]=true;
                 }
             }
         }
     }
+    //更新追踪线程的跟踪状态
     mState=static_cast<int>(pTracker->mLastProcessedState);
 }
 
