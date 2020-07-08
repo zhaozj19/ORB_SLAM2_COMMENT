@@ -57,7 +57,7 @@ Tracking::Tracking( System *pSys,               //SLAM系统指针
 {
     // Load camera parameters from settings file
 
-    //通过通过OpenCV提供的FileStorage函数来读取YAML配置文件，这里应该再判断一下文件是否打开成功
+    //通过OpenCV提供的FileStorage函数来读取YAML配置文件，这里应该再判断一下文件是否打开成功
     //读取相机内参
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
     float fx = fSettings["Camera.fx"];
@@ -98,6 +98,7 @@ Tracking::Tracking( System *pSys,               //SLAM系统指针
         fps=30;
 
     // Max/Min Frames to insert keyframes and to check relocalisation
+    //相机帧数
     mMinFrames = 0;
     mMaxFrames = fps;
 
@@ -132,6 +133,7 @@ Tracking::Tracking( System *pSys,               //SLAM系统指针
     int fIniThFAST = fSettings["ORBextractor.iniThFAST"];       //图片被划分成网格，提取FAST关键点的时候的默认阈值
     int fMinThFAST = fSettings["ORBextractor.minThFAST"];       //如果该网格按照默认阈值实在是找不出来太多特征点，则用较小的阈值
 
+    //创建ORB特征点提取器
     mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
 
     //如果是双目的情况下，会再构造一个右图的特征提取器
@@ -171,24 +173,29 @@ Tracking::Tracking( System *pSys,               //SLAM系统指针
 
 }
 
+//设置局部地图句柄
 void Tracking::SetLocalMapper(LocalMapping *pLocalMapper)
 {
     mpLocalMapper=pLocalMapper;
 }
 
+//设置回环检测器句柄
 void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
 {
     mpLoopClosing=pLoopClosing;
 }
 
+//设置可视窗口句柄
 void Tracking::SetViewer(Viewer *pViewer)
 {
     mpViewer=pViewer;
 }
 
 
+//双目视觉进行跟踪前的一些准备工作
 cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp)
 {
+    //mImGray和imGrayRight分别用来存储 双目视觉中的左右图像转换之后的灰度图
     mImGray = imRectLeft;
     cv::Mat imGrayRight = imRectRight;
 
@@ -196,15 +203,18 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
     {
         if(mbRGB)
         {
+            //如果图片是RGB模式，就传入参数CV_RGB2GRAY
             cvtColor(mImGray,mImGray,CV_RGB2GRAY);
             cvtColor(imGrayRight,imGrayRight,CV_RGB2GRAY);
         }
         else
         {
+            //如果图片是BGR模式，就传入参数CV_BGR2GRAY
             cvtColor(mImGray,mImGray,CV_BGR2GRAY);
             cvtColor(imGrayRight,imGrayRight,CV_BGR2GRAY);
         }
     }
+    //这里多一个alpha通道
     else if(mImGray.channels()==4)
     {
         if(mbRGB)
@@ -219,14 +229,17 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
         }
     }
 
+    //然后获取当前帧
     mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
 
+    //开始跟踪
     Track();
 
+    //返回世界坐标系到该帧相机坐标系的变换矩阵
     return mCurrentFrame.mTcw.clone();
 }
 
-
+//深度相机进行跟踪前的一些准备工作
 cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp)
 {
     mImGray = imRGB;
@@ -234,11 +247,14 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
 
     if(mImGray.channels()==3)
     {
+        //如果图片是RGB模式，就传入参数CV_RGB2GRAY
         if(mbRGB)
             cvtColor(mImGray,mImGray,CV_RGB2GRAY);
+        //如果图片是BGR模式，就传入参数CV_BGR2GRAY
         else
             cvtColor(mImGray,mImGray,CV_BGR2GRAY);
     }
+    //这里多一个alpha通道
     else if(mImGray.channels()==4)
     {
         if(mbRGB)
@@ -246,20 +262,32 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
         else
             cvtColor(mImGray,mImGray,CV_BGRA2GRAY);
     }
-
+    
+    //之前讲过深度图里面的数据是缩放过的数据，需要把他=它处理成原始的深度
     if((fabs(mDepthMapFactor-1.0f)>1e-5) || imDepth.type()!=CV_32F)
+    {
+        //将图像转换成为另外一种数据类型,具有可选的数据大小缩放系数
+        //imDepth原始图像
+        //CV_32F转换后的图像类型
+        //mDepthMapFactor缩放因子
         imDepth.convertTo(imDepth,CV_32F,mDepthMapFactor);
+    }
+        
 
+    //获取当前帧数据
     mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
 
+    //开始跟踪
     Track();
 
+    //返回世界坐标系到该帧相机坐标系的变换矩阵
     return mCurrentFrame.mTcw.clone();
 }
 
-
+//单目视觉进行跟踪前的一些准备工作
 cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
-{
+{   
+    //灰度图
     mImGray = im;
 
     if(mImGray.channels()==3)
@@ -277,6 +305,7 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
         else
             cvtColor(mImGray,mImGray,CV_BGR2GRAY);
     }
+    //多了一个alpha通道
     else if(mImGray.channels()==4)
     {
         if(mbRGB)
@@ -298,9 +327,10 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
         mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
     }
         
-
+    //开启跟踪
     Track();
 
+    //返回世界坐标系到该帧相机坐标系的变换矩阵
     return mCurrentFrame.mTcw.clone();
 }
 
@@ -1542,6 +1572,8 @@ bool Tracking::Relocalization()
 
 }
 
+//追踪线程进行复位操作
+//感觉就是重头来了
 void Tracking::Reset()
 {
 
@@ -1590,6 +1622,7 @@ void Tracking::Reset()
         mpViewer->Release();
 }
 
+//感觉就是重新读了一遍配置，可是我在其他地方没有看到有调用到这个函数的代码
 void Tracking::ChangeCalibration(const string &strSettingPath)
 {
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
@@ -1620,9 +1653,12 @@ void Tracking::ChangeCalibration(const string &strSettingPath)
 
     mbf = fSettings["Camera.bf"];
 
+    //做一个要初始化的标记，因为SLAM初始化的时候要比普通的跟踪多一些操作
+    //感觉 重定位之后需要用到这个函数
     Frame::mbInitialComputations = true;
 }
 
+//设置是否是仅定位模式
 void Tracking::InformOnlyTracking(const bool &flag)
 {
     mbOnlyTracking = flag;

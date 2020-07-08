@@ -54,24 +54,37 @@ class Tracking
 {  
 
 public:
-    Tracking(System* pSys, ORBVocabulary* pVoc, FrameDrawer* pFrameDrawer, MapDrawer* pMapDrawer, Map* pMap,
-             KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor);
+    Tracking(   System* pSys,                   //SLAM系统指针
+                ORBVocabulary* pVoc,            //ORB字典指针
+                FrameDrawer* pFrameDrawer,      //帧绘制器
+                MapDrawer* pMapDrawer,          //地图绘制器
+                Map* pMap,                      //地图类
+                KeyFrameDatabase* pKFDB,        //关键帧数据库
+                const string &strSettingPath,   //配置文件路径
+                const int sensor);              //传感器类型
 
     // Preprocess the input and call Track(). Extract features and performs stereo matching.
+    //在一张图片读取进来之前，需要做一些准备工作，然后才能开始跟踪
+    //包括把当前的图片转换成灰度图，然后把图片转换成帧数据，然后就能获取当前帧了，接下来才可以跟踪
     cv::Mat GrabImageStereo(const cv::Mat &imRectLeft,const cv::Mat &imRectRight, const double &timestamp);
     cv::Mat GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp);
     cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp);
 
+    //设置局部地图句柄
     void SetLocalMapper(LocalMapping* pLocalMapper);
+    //设置回环检测器句柄
     void SetLoopClosing(LoopClosing* pLoopClosing);
+    //设置可视窗口句柄
     void SetViewer(Viewer* pViewer);
 
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
     // TODO: Modify MapPoint::PredictScale to take into account focal lenght
+    //更改校准？？？（没见过用到这个函数）
     void ChangeCalibration(const string &strSettingPath);
 
     // Use this function if you have deactivated local mapping and you only want to localize the camera.
+    //设置SLAM是否处于仅定位模式
     void InformOnlyTracking(const bool &flag);
 
 
@@ -86,39 +99,41 @@ public:
         LOST=3                  // 系统已经跟丢了的状态
     };
 
-    eTrackingState mState;
-    eTrackingState mLastProcessedState;
+    eTrackingState mState;                  //当前的跟踪状态
+    eTrackingState mLastProcessedState;     //上一帧的跟踪状态
 
     // Input sensor
-    int mSensor;
+    int mSensor;                            //传感器类型
 
     // Current Frame
-    Frame mCurrentFrame;
-    cv::Mat mImGray;
+    Frame mCurrentFrame;                    //当前帧
+    cv::Mat mImGray;                        //灰度图（左图）
 
     // Initialization Variables (Monocular)
-    std::vector<int> mvIniLastMatches;
-    std::vector<int> mvIniMatches;
-    std::vector<cv::Point2f> mvbPrevMatched;
-    std::vector<cv::Point3f> mvIniP3D;
-    Frame mInitialFrame;
+    //初始化的时候，牵涉到的前两帧的相关变量（参考帧和当前帧）
+    std::vector<int> mvIniLastMatches;          //这个变量没用到。。。。
+    std::vector<int> mvIniMatches;              //参考帧和当前帧的特征点匹配关系
+    std::vector<cv::Point2f> mvbPrevMatched;    //参考帧的特征点
+    std::vector<cv::Point3f> mvIniP3D;          //初始化过程中，匹配之后经过三角化的空间点
+    Frame mInitialFrame;                        //初始化过程中的参考帧
 
     // Lists used to recover the full camera trajectory at the end of the execution.
     // Basically we store the reference keyframe for each frame and its relative transformation
-    list<cv::Mat> mlRelativeFramePoses;
-    list<KeyFrame*> mlpReferences;
-    list<double> mlFrameTimes;
-    list<bool> mlbLost;
+    list<cv::Mat> mlRelativeFramePoses;     //所有的参考关键帧位姿
+    list<KeyFrame*> mlpReferences;          //参考关键帧
+    list<double> mlFrameTimes;              //参考关键帧的时间戳
+    list<bool> mlbLost;                     //当前帧和参考帧的跟踪过程中，是否跟丢了的标志
 
     // True if local mapping is deactivated and we are performing only localization
+    //是否仅定位的标志
     bool mbOnlyTracking;
 
-    void Reset();
+    void Reset();   //整个系统进行复位操作
 
 protected:
 
     // Main tracking function. It is independent of the input sensor.
-    void Track();
+    void Track();       //追踪函数
 
     // Map initialization for stereo and RGB-D
     void StereoInitialization();
