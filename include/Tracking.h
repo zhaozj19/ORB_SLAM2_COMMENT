@@ -139,7 +139,9 @@ protected:
     void StereoInitialization();
 
     // Map initialization for monocular
+    //单目SLAM追踪线程的初始化
     void MonocularInitialization();
+    //构造单目视觉的地图
     void CreateInitialMapMonocular();
 
     void CheckReplacedInLastFrame();

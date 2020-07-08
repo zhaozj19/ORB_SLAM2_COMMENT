@@ -345,17 +345,21 @@ void Tracking::Track()
     mLastProcessedState=mState;
 
     // Get Map Mutex -> Map cannot be changed
+    //锁定地图互斥量，使地图在追踪过程不能更新
     unique_lock<mutex> lock(mpMap->mMutexMapUpdate);
 
+    //追踪线程还没有初始化的话，就初始化
     if(mState==NOT_INITIALIZED)
     {
+        //RGBD相机也用双目初始化的方式来初始化
         if(mSensor==System::STEREO || mSensor==System::RGBD)
             StereoInitialization();
         else
             MonocularInitialization();
-
+        //初始化之后，把追踪到的数据送给帧绘制器
         mpFrameDrawer->Update(this);
 
+        //看初始化是否成功
         if(mState!=OK)
             return;
     }
@@ -631,25 +635,34 @@ void Tracking::StereoInitialization()
     }
 }
 
+
+//单目SLAM追踪线程的初始化
 void Tracking::MonocularInitialization()
 {
-
+    //这个函数首先是构造一个单目追踪的初始化器，构造单目追踪的初始化器，需要满足连续两帧的特征点数量都大于100，并且配对的特征点数量也要大于100
     if(!mpInitializer)
     {
         // Set Reference Frame
+        //这里是设置参考帧（这是单目SLAM追踪的第一帧，如果初始化成功，那么就会根据这个参考帧F1来定义世界坐标系）
         if(mCurrentFrame.mvKeys.size()>100)
         {
+            //定义参考帧（初始化帧）
             mInitialFrame = Frame(mCurrentFrame);
             mLastFrame = Frame(mCurrentFrame);
+            //mvbPrevMatched保留参考帧的特征点
             mvbPrevMatched.resize(mCurrentFrame.mvKeysUn.size());
             for(size_t i=0; i<mCurrentFrame.mvKeysUn.size(); i++)
                 mvbPrevMatched[i]=mCurrentFrame.mvKeysUn[i].pt;
 
+            //有用吗？
             if(mpInitializer)
                 delete mpInitializer;
 
+            //创建单目SLAM初始化类对象mpInitializer
             mpInitializer =  new Initializer(mCurrentFrame,1.0,200);
 
+            //fill函数：按照单元赋值，将一个区间的元素都赋同一个值
+            //mvIniMatches保存参考帧和当前帧的特征点匹配关系
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
 
             return;
@@ -658,8 +671,11 @@ void Tracking::MonocularInitialization()
     else
     {
         // Try to initialize
+        //如果说初始化器已经构造成功了（之前已经用参考帧来构造过了），那么接下来就要用当前帧来进行进一步的初始化了
+        //同样这里也要求当前真的特征点数量要满足大于100，我想作者这样要求连续两帧的特征点数量都大于100，是为了保证一个鲁棒的初初始化吧
         if((int)mCurrentFrame.mvKeys.size()<=100)
         {
+            //如果不满足，就重来，连参考帧也要重新选择
             delete mpInitializer;
             mpInitializer = static_cast<Initializer*>(NULL);
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
@@ -667,10 +683,13 @@ void Tracking::MonocularInitialization()
         }
 
         // Find correspondences
-        ORBmatcher matcher(0.9,true);
+        //走到这里说明参考帧和当前帧都满足特征点数量的要求，接下里就要匹配ORB特征点了，来看看是否匹配数量大于100的要求
+        ORBmatcher matcher(0.9,true);       //这里构造一个ORB匹配器
+        //调用ORNB匹配器中针对单目初始化的函数SearchForInitialization来对ORB特征进行配对，返回配对数量
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences
+        //这里还是要求是否有足够的配对特征点
         if(nmatches<100)
         {
             delete mpInitializer;
@@ -678,14 +697,18 @@ void Tracking::MonocularInitialization()
             return;
         }
 
+        //到了这里，就可以完成单目的初始化，以及创建单目SLAM地图了
         cv::Mat Rcw; // Current Camera Rotation
         cv::Mat tcw; // Current Camera Translation
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
+        //计算出单应矩阵H和基础矩阵F，来用其中一个矩阵来得到参考帧和当前帧之间的相对位姿，并且进行三角化测量得到最初的点云
         if(mpInitializer->Initialize(mCurrentFrame, mvIniMatches, Rcw, tcw, mvIniP3D, vbTriangulated))
         {
+            //mvIniMatches存储的是参考帧和当前帧特征点之间的匹配关系
             for(size_t i=0, iend=mvIniMatches.size(); i<iend;i++)
             {
+                //如果某一个特征点不能被三角化，就剔除这个特征点，因为在单目初始化中，不能被三角化的特征点，无法得到特征点的空间信息
                 if(mvIniMatches[i]>=0 && !vbTriangulated[i])
                 {
                     mvIniMatches[i]=-1;
@@ -694,59 +717,83 @@ void Tracking::MonocularInitialization()
             }
 
             // Set Frame Poses
+            //这里是以第一帧（参考帧）建立世界坐标系，以后的地图点就是在这个世界坐标系上绘制出来的
+            //因为是以第一帧为世界坐标系，所以参考帧的位姿为单位对角矩阵
             mInitialFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
+            // 由Rcw和tcw构造Tcw,并赋值给mTcw，mTcw为世界坐标系到该帧的变换矩阵
             cv::Mat Tcw = cv::Mat::eye(4,4,CV_32F);
+            //image.copyTo(imageROI)，作用是把image的内容粘贴到imageROI；
             Rcw.copyTo(Tcw.rowRange(0,3).colRange(0,3));
             tcw.copyTo(Tcw.rowRange(0,3).col(3));
-            mCurrentFrame.SetPose(Tcw);
+            mCurrentFrame.SetPose(Tcw);         //这里利用得到的Rcw和tcw，来构造当前帧的位姿（是世界坐标系到当前帧相机坐标系的变换矩阵）
 
+            //这一步就是构造地图了
+            //将三角化得到的3D点包装成MapPoints
+            // Initialize函数会得到mvIniP3D，mvIniP3D是cv::Point3f类型的一个容器，是个存放3D点的临时变量，
+            // CreateInitialMapMonocular将3D点包装成MapPoint类型存入KeyFrame和Map中
             CreateInitialMapMonocular();
         }
     }
 }
 
+
+//构造单目视觉的地图
 void Tracking::CreateInitialMapMonocular()
 {
     // Create KeyFrames
+    //将参考帧和当前帧都设置为关键帧（这两帧确实很关键，起到了初始化单目SLAM追踪的作用）
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpMap,mpKeyFrameDB);
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpMap,mpKeyFrameDB);
 
 
+    //将初始关键帧和当前关键帧的描述子转为BoW
     pKFini->ComputeBoW();
     pKFcur->ComputeBoW();
 
     // Insert KFs in the map
+    //把将关键帧保存到地图，凡是关键帧都要保存在地图中
     mpMap->AddKeyFrame(pKFini);
     mpMap->AddKeyFrame(pKFcur);
 
     // Create MapPoints and asscoiate to keyframes
+    //将配对好的特征点转化为地图点
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
         if(mvIniMatches[i]<0)
             continue;
 
         //Create MapPoint.
+        //worldPos是地图点的世界坐标
         cv::Mat worldPos(mvIniP3D[i]);
 
+        //这里创建一个地图点
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpMap);
 
+        //表示某一关键帧的某一个特征点与之对应的地图点，算是做一个关联，方便重投影的使用
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
 
+        //表示该地图点是由哪一个关键帧的特征点转换来的，算是做一个关联，方便重投影
         pMP->AddObservation(pKFini,i);
         pMP->AddObservation(pKFcur,mvIniMatches[i]);
 
+        //从众多转换到这一个地图点的特征点中挑选描述子得分最高的那个
         pMP->ComputeDistinctiveDescriptors();
+        //更新该地图点平均观测方向以及观测距离的范围
         pMP->UpdateNormalAndDepth();
 
         //Fill Current Frame structure
+        //mvIniMatches[i]是初始化当前帧中的特征点的序号
         mCurrentFrame.mvpMapPoints[mvIniMatches[i]] = pMP;
         mCurrentFrame.mvbOutlier[mvIniMatches[i]] = false;
 
         //Add to Map
+        //地图点添加到地图中
         mpMap->AddMapPoint(pMP);
     }
 
+
+    //TODO：等看了地图相关类，在更新这里的注释
     // Update Connections
     pKFini->UpdateConnections();
     pKFcur->UpdateConnections();
