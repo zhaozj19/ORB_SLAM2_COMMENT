@@ -366,32 +366,46 @@ void Tracking::Track()
     else
     {
         // System is initialized. Track Frame.
+        //跟踪成功与否的标志位
         bool bOK;
 
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
+        //当你跑ORBSLAM的时候，你会在viewer面板上看到有个开关menuLocalizationMode，它表明SLAM是否处于定位模式
+        //如果标记定位模式，那么地图就不会更新，只会跟踪机器人的位置（mbOnlyTracking为true）
         if(!mbOnlyTracking)
         {
+            //正常的SLAM模式
             // Local Mapping is activated. This is the normal behaviour, unless
             // you explicitly activate the "only tracking" mode.
 
+
+            //说明SLAM初始化成功
             if(mState==OK)
             {
                 // Local Mapping might have changed some MapPoints tracked in last frame
+                //在追踪的时候，需要对上一帧的地图点进行更新（有可能是因为通过当前帧观测到的地图点更加准确）
                 CheckReplacedInLastFrame();
 
+                //在追踪算法中，作者提供了三种模式；1、运动模式(Tracking with motion model)
+                //2、关键帧模式(Tracking with reference key frame)和3、重定位模式(Relocalization)
+                //优先选择运动模式，其次是关键帧模式，最后才是重定位模式
                 if(mVelocity.empty() || mCurrentFrame.mnId<mnLastRelocFrameId+2)
                 {
+                    //这里解释下这两个条件，如果此时的运动模式已经失效，则采取关键帧模式
+                    //如果此时运动模式没有失效，但是当前帧的上一帧是重定位帧，那也采取关键帧模式
                     bOK = TrackReferenceKeyFrame();
                 }
                 else
                 {
+                    //这里采取运动模式。说明上一帧没有做过重定位（系统已经平稳运行了一段时间）
                     bOK = TrackWithMotionModel();
-                    if(!bOK)
+                    if(!bOK)    //如果运动模式跟踪失败，还采用关键帧模式
                         bOK = TrackReferenceKeyFrame();
                 }
             }
             else
             {
+                //如果初始化失败，就采用重定位模式
                 bOK = Relocalization();
             }
         }
@@ -854,17 +868,21 @@ void Tracking::CreateInitialMapMonocular()
     mState=OK;
 }
 
+//检查上一帧（参考帧）生成的地图点，并对需要更新的地图点进行更新
 void Tracking::CheckReplacedInLastFrame()
 {
     for(int i =0; i<mLastFrame.N; i++)
     {
+        //得到上一帧的地图点
         MapPoint* pMP = mLastFrame.mvpMapPoints[i];
 
         if(pMP)
         {
+            //通过GetReplaced函数，看能否获得更新后的地图点
             MapPoint* pRep = pMP->GetReplaced();
             if(pRep)
             {
+                //进行更新
                 mLastFrame.mvpMapPoints[i] = pRep;
             }
         }
@@ -872,34 +890,41 @@ void Tracking::CheckReplacedInLastFrame()
 }
 
 
+//根据参考关键帧来进行追踪
 bool Tracking::TrackReferenceKeyFrame()
 {
     // Compute Bag of Words vector
+    //计算当前帧的ORB字典
     mCurrentFrame.ComputeBoW();
 
     // We perform first an ORB matching with the reference keyframe
     // If enough matches are found we setup a PnP solver
-    ORBmatcher matcher(0.7,true);
-    vector<MapPoint*> vpMapPointMatches;
+    ORBmatcher matcher(0.7,true);   //创建ORB特征匹配器
+    vector<MapPoint*> vpMapPointMatches;        //用来保存匹配结果
 
+    // 通过特征点的BoW加快当前帧与参考帧之间的特征点匹配
     int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
 
-    if(nmatches<15)
+    if(nmatches<15)     //匹配数低于15代表配对失败
         return false;
 
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
-    mCurrentFrame.SetPose(mLastFrame.mTcw);
+    mCurrentFrame.SetPose(mLastFrame.mTcw);     //将上一帧的位姿态作为当前帧位姿的初始值
 
-    Optimizer::PoseOptimization(&mCurrentFrame);
+    Optimizer::PoseOptimization(&mCurrentFrame);        //通过优化3D-2D的重投影误差来获得位姿（BA）
 
     // Discard outliers
+    // 剔除优化后的outlier匹配点（MapPoints）
+    //之所以在优化之后才剔除外点，是因为在优化的过程中就有了对这些外点的标记
     int nmatchesMap = 0;
     for(int i =0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
         {
+            //如果对应到的某个特征点是离群点
             if(mCurrentFrame.mvbOutlier[i])
             {
+                //清除它在当前帧中存在过的痕迹
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
 
                 mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
@@ -909,7 +934,7 @@ bool Tracking::TrackReferenceKeyFrame()
                 nmatches--;
             }
             else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
-                nmatchesMap++;
+                nmatchesMap++;      //匹配的内点计数++
         }
     }
 
